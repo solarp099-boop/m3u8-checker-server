@@ -14,13 +14,20 @@ const API_KEY = process.env.API_KEY || "123456";
 // 📺 Cargar streams
 let streams = JSON.parse(fs.readFileSync("streams.json"));
 
-// 🔍 Checker
+// 🔒 EVITA QUE SE EJECUTE 2 VECES AL MISMO TIEMPO
+let checking = false;
+
+// 🔍 Checker (MEJORADO)
 async function checkStreams() {
+
+  if (checking) return; // evita errores
+  checking = true;
+
   console.log("Revisando streams...");
 
   for (let stream of streams) {
     try {
-      const response = await axios.get(stream.url, { timeout: 5000 });
+      const response = await axios.get(stream.url, { timeout: 3000 });
 
       stream.status = response.status === 200 ? "online" : "offline";
 
@@ -30,10 +37,14 @@ async function checkStreams() {
   }
 
   fs.writeFileSync("streams.json", JSON.stringify(streams, null, 2));
+
   console.log("Revisión terminada");
+
+  checking = false;
 }
 
-setInterval(checkStreams, 300000);
+// ⏱️ CADA 15 SEGUNDOS (TIEMPO REAL)
+setInterval(checkStreams, 15000);
 checkStreams();
 
 // 🔐 Middleware
@@ -48,7 +59,7 @@ app.get("/streams", verificarClave, (req, res) => {
   res.json(streams);
 });
 
-// ➕ Agregar
+// ➕ AGREGAR (YA VERIFICA AL INSTANTE)
 app.post("/add", async (req, res) => {
 
   const key = req.query.key;
@@ -59,7 +70,7 @@ app.post("/add", async (req, res) => {
   let status = "offline";
 
   try {
-    const response = await axios.get(url, { timeout: 5000 });
+    const response = await axios.get(url, { timeout: 3000 });
     if (response.status === 200) status = "online";
   } catch (e) {
     status = "offline";
@@ -72,12 +83,14 @@ app.post("/add", async (req, res) => {
   res.redirect(`/admin?key=${API_KEY}`);
 });
 
-// ❌ Eliminar
+// ❌ ELIMINAR
 app.get("/delete/:id", (req, res) => {
+
   const key = req.query.key;
   if (key !== API_KEY) return res.send("No autorizado");
 
   const id = parseInt(req.params.id);
+
   streams.splice(id, 1);
 
   fs.writeFileSync("streams.json", JSON.stringify(streams, null, 2));
@@ -85,12 +98,20 @@ app.get("/delete/:id", (req, res) => {
   res.redirect(`/admin?key=${API_KEY}`);
 });
 
-// 🔐 PANEL WEB
+// 🔐 PANEL WEB (MEJORADO + AUTO REFRESH)
 app.get("/admin", (req, res) => {
+
   const key = req.query.key;
   if (key !== API_KEY) return res.send("No autorizado");
 
   let html = `
+    <html>
+    <head>
+      <title>Panel</title>
+      <meta http-equiv="refresh" content="10"> <!-- 🔥 se actualiza solo cada 10s -->
+    </head>
+    <body>
+
     <h2>Panel de Canales</h2>
 
     <form method="POST" action="/add?key=${API_KEY}">
@@ -107,18 +128,23 @@ app.get("/admin", (req, res) => {
   streams.forEach((s, i) => {
     html += `
       <li>
+        ${s.status === "online" ? "🟢" : "🔴"} 
         ${s.name} - ${s.status}
         <a href="/delete/${i}?key=${API_KEY}">❌ eliminar</a>
       </li>
     `;
   });
 
-  html += "</ul>";
+  html += `
+    </ul>
+    </body>
+    </html>
+  `;
 
   res.send(html);
 });
 
-// 🚀 IMPORTANTE (ARREGLADO)
+// 🚀 PUERTO CORRECTO PARA RENDER
 const PORT = process.env.PORT || 3000;
 
 app.listen(PORT, () => {

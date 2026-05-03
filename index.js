@@ -156,6 +156,41 @@ app.get("/admin", async (req, res) => {
     <title>Panel IPTV</title>
 
     <script>
+      let autoRefresh = true;
+
+      function toggleRefresh() {
+        autoRefresh = !autoRefresh;
+        document.getElementById("btnRefresh").innerText =
+          autoRefresh ? "⏸ Pausar" : "▶ Reanudar";
+      }
+
+      setInterval(() => {
+        if (autoRefresh) location.reload();
+      }, 10000);
+
+      function buscar() {
+        let input = document.getElementById("buscador").value.toLowerCase();
+        let filas = document.querySelectorAll(".fila");
+
+        filas.forEach(f => {
+          let nombre = f.getAttribute("data-name").toLowerCase();
+          f.style.display = nombre.includes(input) ? "" : "none";
+        });
+      }
+
+      function filtrarOffline() {
+        let filas = document.querySelectorAll(".fila");
+
+        filas.forEach(f => {
+          let estado = f.getAttribute("data-status");
+          f.style.display = estado === "offline" ? "" : "none";
+        });
+      }
+
+      function mostrarTodos() {
+        document.querySelectorAll(".fila").forEach(f => f.style.display = "");
+      }
+
       async function guardar(id) {
         const url = document.getElementById("url-" + id).value;
 
@@ -174,13 +209,33 @@ app.get("/admin", async (req, res) => {
       table { width:100%; border-collapse: collapse; }
       td, th { padding:10px; border-bottom:1px solid #333; }
       input { width:100%; padding:5px; }
-      button { padding:5px 10px; cursor:pointer; }
+      button { padding:6px 10px; cursor:pointer; margin:2px; }
     </style>
   </head>
 
   <body>
 
   <h2>Panel IPTV</h2>
+
+  <button id="btnRefresh" onclick="toggleRefresh()">⏸ Pausar</button>
+  <button onclick="filtrarOffline()">🔴 Solo caídos</button>
+  <button onclick="mostrarTodos()">🟢 Mostrar todos</button>
+
+  <br/><br/>
+
+  🔍 Buscar:
+  <input id="buscador" onkeyup="buscar()" placeholder="Nombre canal">
+
+  <hr/>
+
+  <h3>➕ Agregar canal rápido</h3>
+  <form method="POST" action="/add?key=${API_KEY}">
+    <input name="name" placeholder="Nombre">
+    <input name="url" placeholder="URL">
+    <input name="category" placeholder="Categoría">
+    <button>Agregar</button>
+  </form>
+
   <hr/>
   `;
 
@@ -189,8 +244,9 @@ app.get("/admin", async (req, res) => {
     html += `<h3>📂 ${cat}</h3><table>`;
 
     grouped[cat].forEach(s => {
+
       html += `
-      <tr>
+      <tr class="fila" data-name="${s.name}" data-status="${s.status}">
         <td>${s.status === "online" ? "🟢" : "🔴"}</td>
         <td>${s.name}</td>
         <td>
@@ -210,7 +266,6 @@ app.get("/admin", async (req, res) => {
 
   res.send(html);
 });
-
 // 🚀 puerto
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log("Servidor listo"));

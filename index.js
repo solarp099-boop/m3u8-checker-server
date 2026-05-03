@@ -73,8 +73,18 @@ async function checkStreams() {
   checking = false;
 }
 
-setInterval(checkStreams, 30000);
-checkStreams();
+async function startChecker() {
+
+  while (true) {
+    await checkStreams();
+
+    console.log("Esperando siguiente ciclo...");
+    
+    await new Promise(r => setTimeout(r, 10000)); // 10s descanso
+  }
+}
+
+startChecker();
 
 // 🔐 seguridad
 function verificarClave(req, res, next) {

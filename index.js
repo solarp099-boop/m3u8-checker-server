@@ -30,12 +30,38 @@ async function checkStreams() {
 
     await Promise.all(
       batch.map(async (stream) => {
+
         try {
-          const res = await axios.get(stream.url, { timeout: 3000 });
-          stream.status = res.status === 200 ? "online" : "offline";
+
+          // 🔥 intento 1 (HEAD - rápido)
+          await axios.head(stream.url, {
+            timeout: 2000,
+            headers: {
+              "User-Agent": "Mozilla/5.0"
+            }
+          });
+
+          stream.status = "online";
+
         } catch {
-          stream.status = "offline";
+
+          try {
+
+            // 🔥 intento 2 (GET fallback)
+            const res = await axios.get(stream.url, {
+              timeout: 3000,
+              headers: {
+                "User-Agent": "Mozilla/5.0"
+              }
+            });
+
+            stream.status = res.status === 200 ? "online" : "offline";
+
+          } catch {
+            stream.status = "offline";
+          }
         }
+
       })
     );
   }
@@ -47,7 +73,7 @@ async function checkStreams() {
   checking = false;
 }
 
-setInterval(checkStreams, 15000);
+setInterval(checkStreams, 30000);
 checkStreams();
 
 // 🔐 seguridad

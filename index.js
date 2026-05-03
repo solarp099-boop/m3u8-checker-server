@@ -1,23 +1,22 @@
 const express = require("express");
 const axios = require("axios");
 const cors = require("cors");
-const { MongoClient } = require("mongodb");
+const { MongoClient, ObjectId } = require("mongodb");
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// 🔐 CLAVE
 const API_KEY = process.env.API_KEY || "123456";
 
-// 🔥 MONGODB
+// 🔥 MongoDB
 const uri = process.env.MONGO_URI;
 const client = new MongoClient(uri);
 
 let collection;
 
-// 🔌 CONECTAR DB
+// 🔌 conectar
 async function conectarDB() {
   try {
     await client.connect();
@@ -29,14 +28,7 @@ async function conectarDB() {
   }
 }
 
-(async () => {
-  await conectarDB();
-
-  // SOLO después de conectar, iniciar checker
-  setInterval(checkStreams, 15000);
-
-})();
-// 🔍 CHECKER (AHORA CON DB)
+// 🔍 checker mejorado
 let checking = false;
 
 async function checkStreams() {
@@ -47,34 +39,66 @@ async function checkStreams() {
 
   console.log("Revisando streams...");
 
-  const streams = await collection.find().toArray();
+  try {
+    const streams = await collection.find().toArray();
 
-  await Promise.all(
-    streams.map(async (stream) => {
+    await Promise.all(
+      streams.map(async (stream) => {
 
-      let status = "offline";
+        let status = "offline";
 
-      try {
-        const res = await axios.get(stream.url, { timeout: 3000 });
-        status = res.status === 200 ? "online" : "offline";
-      } catch {}
+        try {
+          // intento HEAD
+          await axios.head(stream.url, {
+            timeout: 5000,
+            headers: { "User-Agent": "Mozilla/5.0" }
+          });
 
-      await collection.updateOne(
-        { _id: stream._id },
-        { $set: { status } }
-      );
+          status = "online";
 
-    })
-  );
+        } catch {
+
+          try {
+            // fallback GET
+            const res = await axios.get(stream.url, {
+              timeout: 8000,
+              headers: { "User-Agent": "Mozilla/5.0" },
+              validateStatus: () => true
+            });
+
+            if (res.status === 200) {
+              status = "online";
+            }
+
+          } catch {
+            status = "offline";
+          }
+        }
+
+        await collection.updateOne(
+          { _id: stream._id },
+          { $set: { status } }
+        );
+
+      })
+    );
+
+  } catch (e) {
+    console.error("Error en checker:", e);
+  }
 
   console.log("Revisión terminada");
 
   checking = false;
 }
 
-setInterval(checkStreams, 15000);
+// 🚀 iniciar
+(async () => {
+  await conectarDB();
+  setInterval(checkStreams, 15000);
+})();
 
-// 🔐 SEGURIDAD
+// 🔐 seguridad
 function verificarClave(req, res, next) {
   if (req.query.key !== API_KEY) return res.send("No autorizado");
   next();
@@ -86,7 +110,7 @@ app.get("/streams", verificarClave, async (req, res) => {
   res.json(streams);
 });
 
-// ➕ AGREGAR
+// ➕ agregar
 app.post("/add", async (req, res) => {
   if (req.query.key !== API_KEY) return res.send("No autorizado");
 
@@ -102,7 +126,7 @@ app.post("/add", async (req, res) => {
   res.redirect(`/admin?key=${API_KEY}`);
 });
 
-// 🔥 BULK
+// 🔥 bulk
 app.post("/bulk", async (req, res) => {
   if (req.query.key !== API_KEY) return res.send("No autorizado");
 
@@ -134,18 +158,16 @@ app.post("/bulk", async (req, res) => {
   res.redirect(`/admin?key=${API_KEY}`);
 });
 
-// ❌ ELIMINAR UNO
+// ❌ eliminar
 app.get("/delete/:id", async (req, res) => {
   if (req.query.key !== API_KEY) return res.send("No autorizado");
-
-  const { ObjectId } = require("mongodb");
 
   await collection.deleteOne({ _id: new ObjectId(req.params.id) });
 
   res.redirect(`/admin?key=${API_KEY}`);
 });
 
-// ❌ ELIMINAR TODO
+// ❌ borrar todo
 app.get("/deleteAll", async (req, res) => {
   if (req.query.key !== API_KEY) return res.send("No autorizado");
 
@@ -154,14 +176,15 @@ app.get("/deleteAll", async (req, res) => {
   res.redirect(`/admin?key=${API_KEY}`);
 });
 
-// 🔐 PANEL
+// 🔐 PANEL CON PAUSA
 app.get("/admin", async (req, res) => {
+
   if (req.query.key !== API_KEY) return res.send("No autorizado");
 
   const streams = await collection.find().toArray();
 
   const grouped = {};
-  streams.forEach((s) => {
+  streams.forEach(s => {
     if (!grouped[s.category]) grouped[s.category] = [];
     grouped[s.category].push(s);
   });
@@ -170,6 +193,21 @@ app.get("/admin", async (req, res) => {
   <html>
   <head>
     <title>Panel</title>
+
+    <script>
+      let autoRefresh = true;
+
+      function toggleRefresh() {
+        autoRefresh = !autoRefresh;
+        document.getElementById("btnRefresh").innerText =
+          autoRefresh ? "⏸ Pausar" : "▶ Reanudar";
+      }
+
+      setInterval(() => {
+        if (autoRefresh) location.reload();
+      }, 10000);
+    </script>
+
     <style>
       body { font-family: Arial; }
       .cat { margin-top:20px; }
@@ -179,6 +217,8 @@ app.get("/admin", async (req, res) => {
   <body>
 
   <h2>Panel de Canales</h2>
+
+  <button id="btnRefresh" onclick="toggleRefresh()">⏸ Pausar</button>
 
   <a href="/deleteAll?key=${API_KEY}">
     <button style="background:red;color:white;">🗑 Borrar todo</button>
@@ -205,9 +245,10 @@ app.get("/admin", async (req, res) => {
   `;
 
   for (let cat in grouped) {
+
     html += `<div class="cat"><h3>📂 ${cat}</h3><ul>`;
 
-    grouped[cat].forEach((s) => {
+    grouped[cat].forEach(s => {
       html += `
         <li>
           ${s.status === "online" ? "🟢" : "🔴"}
@@ -225,6 +266,6 @@ app.get("/admin", async (req, res) => {
   res.send(html);
 });
 
-// 🚀 PUERTO
+// 🚀 puerto
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log("Servidor listo"));

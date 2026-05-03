@@ -22,7 +22,7 @@ async function checkStreams() {
 
   console.log("Revisando streams...");
 
-  const batchSize = 10;
+  const batchSize = 20;
 
   for (let i = 0; i < streams.length; i += batchSize) {
 

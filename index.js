@@ -29,13 +29,20 @@ async function conectarDB() {
   }
 }
 
-conectarDB();
+(async () => {
+  await conectarDB();
 
+  // SOLO después de conectar, iniciar checker
+  setInterval(checkStreams, 15000);
+
+})();
 // 🔍 CHECKER (AHORA CON DB)
 let checking = false;
 
 async function checkStreams() {
-  if (checking) return;
+
+  if (checking || !collection) return;
+
   checking = true;
 
   console.log("Revisando streams...");
@@ -44,6 +51,7 @@ async function checkStreams() {
 
   await Promise.all(
     streams.map(async (stream) => {
+
       let status = "offline";
 
       try {
@@ -55,10 +63,12 @@ async function checkStreams() {
         { _id: stream._id },
         { $set: { status } }
       );
+
     })
   );
 
   console.log("Revisión terminada");
+
   checking = false;
 }
 

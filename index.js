@@ -22,16 +22,23 @@ async function checkStreams() {
 
   console.log("Revisando streams...");
 
-  await Promise.all(
-    streams.map(async (stream) => {
-      try {
-        const res = await axios.get(stream.url, { timeout: 3000 });
-        stream.status = res.status === 200 ? "online" : "offline";
-      } catch {
-        stream.status = "offline";
-      }
-    })
-  );
+  const batchSize = 10;
+
+  for (let i = 0; i < streams.length; i += batchSize) {
+
+    const batch = streams.slice(i, i + batchSize);
+
+    await Promise.all(
+      batch.map(async (stream) => {
+        try {
+          const res = await axios.get(stream.url, { timeout: 3000 });
+          stream.status = res.status === 200 ? "online" : "offline";
+        } catch {
+          stream.status = "offline";
+        }
+      })
+    );
+  }
 
   fs.writeFileSync("streams.json", JSON.stringify(streams, null, 2));
 

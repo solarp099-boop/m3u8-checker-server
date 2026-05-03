@@ -1,219 +1,181 @@
-const fs = require("fs");
 const express = require("express");
 const axios = require("axios");
 const cors = require("cors");
+const { MongoClient } = require("mongodb");
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
+// 🔐 CLAVE
 const API_KEY = process.env.API_KEY || "123456";
 
-let streams = JSON.parse(fs.readFileSync("streams.json"));
+// 🔥 MONGODB
+const uri = process.env.MONGO_URI;
+const client = new MongoClient(uri);
 
+let collection;
+
+// 🔌 CONECTAR DB
+async function conectarDB() {
+  try {
+    await client.connect();
+    const db = client.db("streamsDB");
+    collection = db.collection("streams");
+    console.log("✅ Conectado a MongoDB");
+  } catch (e) {
+    console.error("❌ Error MongoDB:", e);
+  }
+}
+
+conectarDB();
+
+// 🔍 CHECKER (AHORA CON DB)
 let checking = false;
 
-// 🔍 checker (PARALELO)
 async function checkStreams() {
-
   if (checking) return;
   checking = true;
 
   console.log("Revisando streams...");
 
-  const batchSize = 20;
+  const streams = await collection.find().toArray();
 
-  for (let i = 0; i < streams.length; i += batchSize) {
+  await Promise.all(
+    streams.map(async (stream) => {
+      let status = "offline";
 
-    const batch = streams.slice(i, i + batchSize);
+      try {
+        const res = await axios.get(stream.url, { timeout: 3000 });
+        status = res.status === 200 ? "online" : "offline";
+      } catch {}
 
-    await Promise.all(
-      batch.map(async (stream) => {
-
-        try {
-          await axios.head(stream.url, {
-            timeout: 2000,
-            headers: { "User-Agent": "Mozilla/5.0" }
-          });
-
-          stream.status = "online";
-
-        } catch {
-
-          try {
-            const res = await axios.get(stream.url, {
-              timeout: 3000,
-              headers: { "User-Agent": "Mozilla/5.0" }
-            });
-
-            stream.status = res.status === 200 ? "online" : "offline";
-
-          } catch {
-            stream.status = "offline";
-          }
-        }
-
-      })
-    );
-  }
-
-  fs.writeFileSync("streams.json", JSON.stringify(streams, null, 2));
+      await collection.updateOne(
+        { _id: stream._id },
+        { $set: { status } }
+      );
+    })
+  );
 
   console.log("Revisión terminada");
-
   checking = false;
 }
 
-// 🔁 LOOP INTELIGENTE
-async function startChecker() {
-  while (true) {
-    await checkStreams();
-    console.log("Esperando siguiente ciclo...");
-    await new Promise(r => setTimeout(r, 10000));
-  }
-}
+setInterval(checkStreams, 15000);
 
-startChecker();
-
-// 🔐 seguridad
+// 🔐 SEGURIDAD
 function verificarClave(req, res, next) {
   if (req.query.key !== API_KEY) return res.send("No autorizado");
   next();
 }
 
 // 🌐 API
-app.get("/streams", verificarClave, (req, res) => {
+app.get("/streams", verificarClave, async (req, res) => {
+  const streams = await collection.find().toArray();
   res.json(streams);
 });
 
-// 🗑 BORRAR TODO
-app.get("/deleteAll", (req, res) => {
-  if (req.query.key !== API_KEY) return res.send("No autorizado");
-
-  streams = [];
-  fs.writeFileSync("streams.json", JSON.stringify(streams, null, 2));
-
-  res.redirect(`/admin?key=${API_KEY}`);
-});
-
-// ➕ AGREGAR UNO
-app.post("/add", (req, res) => {
+// ➕ AGREGAR
+app.post("/add", async (req, res) => {
   if (req.query.key !== API_KEY) return res.send("No autorizado");
 
   const { name, url, category } = req.body;
 
-  streams.push({ name, url, category, status: "unknown" });
-
-  fs.writeFileSync("streams.json", JSON.stringify(streams, null, 2));
+  await collection.insertOne({
+    name,
+    url,
+    category: category || "Otros",
+    status: "unknown"
+  });
 
   res.redirect(`/admin?key=${API_KEY}`);
 });
 
 // 🔥 BULK
-app.post("/bulk", (req, res) => {
-
+app.post("/bulk", async (req, res) => {
   if (req.query.key !== API_KEY) return res.send("No autorizado");
 
   const { data } = req.body;
 
   let currentCategory = "Otros";
-
   const lines = data.split("\n");
 
-  lines.forEach(line => {
-
+  for (let line of lines) {
     line = line.trim();
 
     if (line.startsWith("//")) {
       currentCategory = line.replace("//", "").trim();
-      return;
+      continue;
     }
 
     const parts = line.split("|");
 
     if (parts.length === 2) {
-      streams.push({
+      await collection.insertOne({
         name: parts[0].trim(),
         url: parts[1].trim(),
         category: currentCategory,
         status: "unknown"
       });
     }
-  });
-
-  fs.writeFileSync("streams.json", JSON.stringify(streams, null, 2));
+  }
 
   res.redirect(`/admin?key=${API_KEY}`);
 });
 
-// ❌ eliminar
-app.get("/delete/:id", (req, res) => {
-
+// ❌ ELIMINAR UNO
+app.get("/delete/:id", async (req, res) => {
   if (req.query.key !== API_KEY) return res.send("No autorizado");
 
-  streams.splice(parseInt(req.params.id), 1);
+  const { ObjectId } = require("mongodb");
 
-  fs.writeFileSync("streams.json", JSON.stringify(streams, null, 2));
+  await collection.deleteOne({ _id: new ObjectId(req.params.id) });
+
+  res.redirect(`/admin?key=${API_KEY}`);
+});
+
+// ❌ ELIMINAR TODO
+app.get("/deleteAll", async (req, res) => {
+  if (req.query.key !== API_KEY) return res.send("No autorizado");
+
+  await collection.deleteMany({});
 
   res.redirect(`/admin?key=${API_KEY}`);
 });
 
 // 🔐 PANEL
-app.get("/admin", (req, res) => {
-
+app.get("/admin", async (req, res) => {
   if (req.query.key !== API_KEY) return res.send("No autorizado");
+
+  const streams = await collection.find().toArray();
+
+  const grouped = {};
+  streams.forEach((s) => {
+    if (!grouped[s.category]) grouped[s.category] = [];
+    grouped[s.category].push(s);
+  });
 
   let html = `
   <html>
   <head>
     <title>Panel</title>
-
-    <script>
-      let autoRefresh = true;
-      let typing = false;
-
-      function toggleRefresh() {
-        autoRefresh = !autoRefresh;
-        const btn = document.getElementById("toggleBtn");
-        btn.innerText = autoRefresh ? "⏸ Pausar" : "▶ Reanudar";
-      }
-
-      document.addEventListener("input", () => {
-        typing = true;
-        setTimeout(() => typing = false, 3000);
-      });
-
-      setInterval(() => {
-        if (autoRefresh && !typing) {
-          location.reload();
-        }
-      }, 10000);
-    </script>
-
     <style>
       body { font-family: Arial; }
       .cat { margin-top:20px; }
-      button { padding: 6px 10px; margin: 3px; }
+      button { padding:8px; }
     </style>
   </head>
   <body>
 
   <h2>Panel de Canales</h2>
 
-  <!-- ⏸ CONTROL -->
-  <button id="toggleBtn" onclick="toggleRefresh()">⏸ Pausar</button>
-
-  <br/><br/>
-
-  <!-- 🗑 BORRAR TODO -->
-  <a href="/deleteAll?key=${API_KEY}" onclick="return confirm('¿Seguro?')">
+  <a href="/deleteAll?key=${API_KEY}">
     <button style="background:red;color:white;">🗑 Borrar todo</button>
   </a>
 
-  <br/><br/>
+  <hr/>
 
-  <!-- agregar uno -->
   <form method="POST" action="/add?key=${API_KEY}">
     <input name="name" placeholder="Nombre">
     <input name="url" placeholder="URL">
@@ -223,34 +185,24 @@ app.get("/admin", (req, res) => {
 
   <hr/>
 
-  <!-- BULK -->
   <h3>Agregar masivo</h3>
   <form method="POST" action="/bulk?key=${API_KEY}">
-    <textarea name="data" rows="12" cols="50" placeholder="//Categoria&#10;Nombre|URL"></textarea><br/>
+    <textarea name="data" rows="10" cols="50"></textarea><br/>
     <button>Agregar todo</button>
   </form>
 
   <hr/>
   `;
 
-  const grouped = {};
-
-  streams.forEach((s, i) => {
-    const cat = s.category || "Sin categoría";
-    if (!grouped[cat]) grouped[cat] = [];
-    grouped[cat].push({ ...s, index: i });
-  });
-
   for (let cat in grouped) {
-
     html += `<div class="cat"><h3>📂 ${cat}</h3><ul>`;
 
-    grouped[cat].forEach(s => {
+    grouped[cat].forEach((s) => {
       html += `
         <li>
           ${s.status === "online" ? "🟢" : "🔴"}
           ${s.name}
-          <a href="/delete/${s.index}?key=${API_KEY}">❌</a>
+          <a href="/delete/${s._id}?key=${API_KEY}">❌</a>
         </li>
       `;
     });
@@ -263,6 +215,6 @@ app.get("/admin", (req, res) => {
   res.send(html);
 });
 
-// 🚀 servidor
+// 🚀 PUERTO
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log("Servidor listo"));

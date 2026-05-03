@@ -1,7 +1,7 @@
 const express = require("express");
 const axios = require("axios");
 const cors = require("cors");
-const { MongoClient } = require("mongodb");
+const { MongoClient, ObjectId } = require("mongodb");
 
 const app = express();
 app.use(cors());
@@ -12,7 +12,7 @@ app.use(express.urlencoded({ extended: true }));
 const API_KEY = process.env.API_KEY || "123456";
 
 // 🔥 MONGODB
-const uri = process.env.MONGO_URI;
+const uri = process.env.MONGO_URI || "mongodb+srv://solarp099:fido2003@cluster0.w2hu3gt.mongodb.net/?retryWrites=true&w=majority";
 const client = new MongoClient(uri);
 
 let collection;
@@ -29,14 +29,7 @@ async function conectarDB() {
   }
 }
 
-(async () => {
-  await conectarDB();
-
-  // SOLO después de conectar, iniciar checker
-  setInterval(checkStreams, 15000);
-
-})();
-// 🔍 CHECKER (AHORA CON DB)
+// 🔍 CHECKER MEJORADO
 let checking = false;
 
 async function checkStreams() {
@@ -47,32 +40,54 @@ async function checkStreams() {
 
   console.log("Revisando streams...");
 
-  const streams = await collection.find().toArray();
+  try {
+    const streams = await collection.find().toArray();
 
-  await Promise.all(
-    streams.map(async (stream) => {
+    await Promise.all(
+      streams.map(async (stream) => {
 
-      let status = "offline";
+        let status = "offline";
 
-      try {
-        const res = await axios.get(stream.url, { timeout: 3000 });
-        status = res.status === 200 ? "online" : "offline";
-      } catch {}
+        try {
+          const res = await axios.get(stream.url, {
+            timeout: 8000,
+            headers: {
+              "User-Agent": "Mozilla/5.0",
+              "Accept": "*/*"
+            },
+            validateStatus: () => true
+          });
 
-      await collection.updateOne(
-        { _id: stream._id },
-        { $set: { status } }
-      );
+          if (res.status === 200 && res.data) {
+            status = "online";
+          }
 
-    })
-  );
+        } catch (e) {
+          status = "offline";
+        }
+
+        await collection.updateOne(
+          { _id: stream._id },
+          { $set: { status } }
+        );
+
+      })
+    );
+
+  } catch (e) {
+    console.error("Error en checker:", e);
+  }
 
   console.log("Revisión terminada");
 
   checking = false;
 }
 
-setInterval(checkStreams, 15000);
+// 🚀 INICIAR TODO (SIN DUPLICADOS)
+(async () => {
+  await conectarDB();
+  setInterval(checkStreams, 15000);
+})();
 
 // 🔐 SEGURIDAD
 function verificarClave(req, res, next) {
@@ -138,8 +153,6 @@ app.post("/bulk", async (req, res) => {
 app.get("/delete/:id", async (req, res) => {
   if (req.query.key !== API_KEY) return res.send("No autorizado");
 
-  const { ObjectId } = require("mongodb");
-
   await collection.deleteOne({ _id: new ObjectId(req.params.id) });
 
   res.redirect(`/admin?key=${API_KEY}`);
@@ -187,8 +200,8 @@ app.get("/admin", async (req, res) => {
   <hr/>
 
   <form method="POST" action="/add?key=${API_KEY}">
-    <input name="name" placeholder="Nombre">
-    <input name="url" placeholder="URL">
+    <input name="name" placeholder="Nombre" required>
+    <input name="url" placeholder="URL" required>
     <input name="category" placeholder="Categoría">
     <button>Agregar</button>
   </form>
@@ -197,7 +210,7 @@ app.get("/admin", async (req, res) => {
 
   <h3>Agregar masivo</h3>
   <form method="POST" action="/bulk?key=${API_KEY}">
-    <textarea name="data" rows="10" cols="50"></textarea><br/>
+    <textarea name="data" rows="10" cols="50" placeholder="//Categoria&#10;Nombre|URL"></textarea><br/>
     <button>Agregar todo</button>
   </form>
 

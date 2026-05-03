@@ -32,13 +32,9 @@ async function checkStreams() {
       batch.map(async (stream) => {
 
         try {
-
-          // 🔥 intento 1 (HEAD - rápido)
           await axios.head(stream.url, {
             timeout: 2000,
-            headers: {
-              "User-Agent": "Mozilla/5.0"
-            }
+            headers: { "User-Agent": "Mozilla/5.0" }
           });
 
           stream.status = "online";
@@ -46,13 +42,9 @@ async function checkStreams() {
         } catch {
 
           try {
-
-            // 🔥 intento 2 (GET fallback)
             const res = await axios.get(stream.url, {
               timeout: 3000,
-              headers: {
-                "User-Agent": "Mozilla/5.0"
-              }
+              headers: { "User-Agent": "Mozilla/5.0" }
             });
 
             stream.status = res.status === 200 ? "online" : "offline";
@@ -73,14 +65,12 @@ async function checkStreams() {
   checking = false;
 }
 
+// 🔁 LOOP INTELIGENTE
 async function startChecker() {
-
   while (true) {
     await checkStreams();
-
     console.log("Esperando siguiente ciclo...");
-    
-    await new Promise(r => setTimeout(r, 10000)); // 10s descanso
+    await new Promise(r => setTimeout(r, 10000));
   }
 }
 
@@ -99,19 +89,16 @@ app.get("/streams", verificarClave, (req, res) => {
 
 // 🗑 BORRAR TODO
 app.get("/deleteAll", (req, res) => {
-
   if (req.query.key !== API_KEY) return res.send("No autorizado");
 
   streams = [];
-
   fs.writeFileSync("streams.json", JSON.stringify(streams, null, 2));
 
   res.redirect(`/admin?key=${API_KEY}`);
 });
 
 // ➕ AGREGAR UNO
-app.post("/add", async (req, res) => {
-
+app.post("/add", (req, res) => {
   if (req.query.key !== API_KEY) return res.send("No autorizado");
 
   const { name, url, category } = req.body;
@@ -123,7 +110,7 @@ app.post("/add", async (req, res) => {
   res.redirect(`/admin?key=${API_KEY}`);
 });
 
-// 🔥 BULK CON CATEGORÍAS
+// 🔥 BULK
 app.post("/bulk", (req, res) => {
 
   if (req.query.key !== API_KEY) return res.send("No autorizado");
@@ -181,10 +168,31 @@ app.get("/admin", (req, res) => {
   <html>
   <head>
     <title>Panel</title>
-    <meta http-equiv="refresh" content="10">
+
+    <script>
+      let autoRefresh = true;
+      let typing = false;
+
+      function toggleRefresh() {
+        autoRefresh = !autoRefresh;
+        const btn = document.getElementById("toggleBtn");
+        btn.innerText = autoRefresh ? "⏸ Pausar" : "▶ Reanudar";
+      }
+
+      document.addEventListener("input", () => {
+        typing = true;
+        setTimeout(() => typing = false, 3000);
+      });
+
+      setInterval(() => {
+        if (autoRefresh && !typing) {
+          location.reload();
+        }
+      }, 10000);
+    </script>
+
     <style>
       body { font-family: Arial; }
-      h2 { color: #333; }
       .cat { margin-top:20px; }
       button { padding: 6px 10px; margin: 3px; }
     </style>
@@ -193,10 +201,14 @@ app.get("/admin", (req, res) => {
 
   <h2>Panel de Canales</h2>
 
-  <!-- 🔥 BOTÓN BORRAR TODO -->
-  <a href="/deleteAll?key=${API_KEY}" 
-     onclick="return confirm('¿Seguro que quieres borrar TODO?')">
-     <button style="background:red;color:white;">🗑 Borrar todo</button>
+  <!-- ⏸ CONTROL -->
+  <button id="toggleBtn" onclick="toggleRefresh()">⏸ Pausar</button>
+
+  <br/><br/>
+
+  <!-- 🗑 BORRAR TODO -->
+  <a href="/deleteAll?key=${API_KEY}" onclick="return confirm('¿Seguro?')">
+    <button style="background:red;color:white;">🗑 Borrar todo</button>
   </a>
 
   <br/><br/>
@@ -221,19 +233,14 @@ app.get("/admin", (req, res) => {
   <hr/>
   `;
 
-  // agrupar por categoría (FIX IMPORTANTE)
   const grouped = {};
 
   streams.forEach((s, i) => {
-
     const cat = s.category || "Sin categoría";
-
     if (!grouped[cat]) grouped[cat] = [];
-
     grouped[cat].push({ ...s, index: i });
   });
 
-  // mostrar por categoría
   for (let cat in grouped) {
 
     html += `<div class="cat"><h3>📂 ${cat}</h3><ul>`;
@@ -256,6 +263,6 @@ app.get("/admin", (req, res) => {
   res.send(html);
 });
 
-// 🚀 puerto
+// 🚀 servidor
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log("Servidor listo"));

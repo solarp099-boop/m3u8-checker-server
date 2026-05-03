@@ -14,22 +14,29 @@ let streams = JSON.parse(fs.readFileSync("streams.json"));
 
 let checking = false;
 
-// 🔍 checker
+// 🔍 checker (PARALELO)
 async function checkStreams() {
 
   if (checking) return;
   checking = true;
 
-  for (let stream of streams) {
-    try {
-      const res = await axios.get(stream.url, { timeout: 3000 });
-      stream.status = res.status === 200 ? "online" : "offline";
-    } catch {
-      stream.status = "offline";
-    }
-  }
+  console.log("Revisando streams...");
+
+  await Promise.all(
+    streams.map(async (stream) => {
+      try {
+        const res = await axios.get(stream.url, { timeout: 3000 });
+        stream.status = res.status === 200 ? "online" : "offline";
+      } catch {
+        stream.status = "offline";
+      }
+    })
+  );
 
   fs.writeFileSync("streams.json", JSON.stringify(streams, null, 2));
+
+  console.log("Revisión terminada");
+
   checking = false;
 }
 
@@ -45,6 +52,18 @@ function verificarClave(req, res, next) {
 // 🌐 API
 app.get("/streams", verificarClave, (req, res) => {
   res.json(streams);
+});
+
+// 🗑 BORRAR TODO
+app.get("/deleteAll", (req, res) => {
+
+  if (req.query.key !== API_KEY) return res.send("No autorizado");
+
+  streams = [];
+
+  fs.writeFileSync("streams.json", JSON.stringify(streams, null, 2));
+
+  res.redirect(`/admin?key=${API_KEY}`);
 });
 
 // ➕ AGREGAR UNO
@@ -76,7 +95,6 @@ app.post("/bulk", (req, res) => {
 
     line = line.trim();
 
-    // detectar categoría
     if (line.startsWith("//")) {
       currentCategory = line.replace("//", "").trim();
       return;
@@ -125,11 +143,20 @@ app.get("/admin", (req, res) => {
       body { font-family: Arial; }
       h2 { color: #333; }
       .cat { margin-top:20px; }
+      button { padding: 6px 10px; margin: 3px; }
     </style>
   </head>
   <body>
 
   <h2>Panel de Canales</h2>
+
+  <!-- 🔥 BOTÓN BORRAR TODO -->
+  <a href="/deleteAll?key=${API_KEY}" 
+     onclick="return confirm('¿Seguro que quieres borrar TODO?')">
+     <button style="background:red;color:white;">🗑 Borrar todo</button>
+  </a>
+
+  <br/><br/>
 
   <!-- agregar uno -->
   <form method="POST" action="/add?key=${API_KEY}">
@@ -151,12 +178,16 @@ app.get("/admin", (req, res) => {
   <hr/>
   `;
 
-  // agrupar por categoría
+  // agrupar por categoría (FIX IMPORTANTE)
   const grouped = {};
 
   streams.forEach((s, i) => {
-    if (!grouped[s.category]) grouped[s.category] = [];
-    grouped[s.category].push({ ...s, index: i });
+
+    const cat = s.category || "Sin categoría";
+
+    if (!grouped[cat]) grouped[cat] = [];
+
+    grouped[cat].push({ ...s, index: i });
   });
 
   // mostrar por categoría

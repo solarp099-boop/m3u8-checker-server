@@ -14,13 +14,13 @@ const API_KEY = process.env.API_KEY || "123456";
 // 📺 Cargar streams
 let streams = JSON.parse(fs.readFileSync("streams.json"));
 
-// 🔒 EVITA QUE SE EJECUTE 2 VECES AL MISMO TIEMPO
+// 🔒 EVITA DOBLE EJECUCIÓN
 let checking = false;
 
-// 🔍 Checker (MEJORADO)
+// 🔍 Checker
 async function checkStreams() {
 
-  if (checking) return; // evita errores
+  if (checking) return;
   checking = true;
 
   console.log("Revisando streams...");
@@ -28,9 +28,7 @@ async function checkStreams() {
   for (let stream of streams) {
     try {
       const response = await axios.get(stream.url, { timeout: 3000 });
-
       stream.status = response.status === 200 ? "online" : "offline";
-
     } catch (error) {
       stream.status = "offline";
     }
@@ -43,7 +41,7 @@ async function checkStreams() {
   checking = false;
 }
 
-// ⏱️ CADA 15 SEGUNDOS (TIEMPO REAL)
+// ⏱️ cada 15s
 setInterval(checkStreams, 15000);
 checkStreams();
 
@@ -59,7 +57,7 @@ app.get("/streams", verificarClave, (req, res) => {
   res.json(streams);
 });
 
-// ➕ AGREGAR (YA VERIFICA AL INSTANTE)
+// ➕ AGREGAR 1
 app.post("/add", async (req, res) => {
 
   const key = req.query.key;
@@ -83,6 +81,32 @@ app.post("/add", async (req, res) => {
   res.redirect(`/admin?key=${API_KEY}`);
 });
 
+// 🚀 🔥 AGREGAR MASIVO (LO NUEVO)
+app.post("/bulk", (req, res) => {
+
+  const key = req.query.key;
+  if (key !== API_KEY) return res.send("No autorizado");
+
+  const { data } = req.body;
+
+  const lines = data.split("\n");
+
+  lines.forEach(line => {
+    const parts = line.split("|");
+
+    if (parts.length === 2) {
+      const name = parts[0].trim();
+      const url = parts[1].trim();
+
+      streams.push({ name, url, status: "unknown" });
+    }
+  });
+
+  fs.writeFileSync("streams.json", JSON.stringify(streams, null, 2));
+
+  res.redirect(`/admin?key=${API_KEY}`);
+});
+
 // ❌ ELIMINAR
 app.get("/delete/:id", (req, res) => {
 
@@ -98,7 +122,7 @@ app.get("/delete/:id", (req, res) => {
   res.redirect(`/admin?key=${API_KEY}`);
 });
 
-// 🔐 PANEL WEB (MEJORADO + AUTO REFRESH)
+// 🔐 PANEL WEB
 app.get("/admin", (req, res) => {
 
   const key = req.query.key;
@@ -108,16 +132,26 @@ app.get("/admin", (req, res) => {
     <html>
     <head>
       <title>Panel</title>
-      <meta http-equiv="refresh" content="10"> <!-- 🔥 se actualiza solo cada 10s -->
+      <meta http-equiv="refresh" content="10">
     </head>
     <body>
 
     <h2>Panel de Canales</h2>
 
+    <!-- 🔹 AGREGAR 1 -->
     <form method="POST" action="/add?key=${API_KEY}">
       <input name="name" placeholder="Nombre canal" required />
       <input name="url" placeholder="URL m3u8" required />
       <button type="submit">Agregar</button>
+    </form>
+
+    <hr/>
+
+    <!-- 🔥 AGREGAR MASIVO -->
+    <h3>Agregar masivo</h3>
+    <form method="POST" action="/bulk?key=${API_KEY}">
+      <textarea name="data" rows="10" cols="40" placeholder="Nombre|URL"></textarea><br/>
+      <button type="submit">Agregar todos</button>
     </form>
 
     <hr/>
@@ -144,7 +178,7 @@ app.get("/admin", (req, res) => {
   res.send(html);
 });
 
-// 🚀 PUERTO CORRECTO PARA RENDER
+// 🚀 PUERTO
 const PORT = process.env.PORT || 3000;
 
 app.listen(PORT, () => {

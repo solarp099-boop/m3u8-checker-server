@@ -28,7 +28,7 @@ async function conectarDB() {
   }
 }
 
-// 🔍 checker mejorado
+// 🔍 checker
 let checking = false;
 
 async function checkStreams() {
@@ -48,7 +48,6 @@ async function checkStreams() {
         let status = "offline";
 
         try {
-          // intento HEAD
           await axios.head(stream.url, {
             timeout: 5000,
             headers: { "User-Agent": "Mozilla/5.0" }
@@ -59,7 +58,6 @@ async function checkStreams() {
         } catch {
 
           try {
-            // fallback GET
             const res = await axios.get(stream.url, {
               timeout: 8000,
               headers: { "User-Agent": "Mozilla/5.0" },
@@ -88,7 +86,6 @@ async function checkStreams() {
   }
 
   console.log("Revisión terminada");
-
   checking = false;
 }
 
@@ -110,6 +107,20 @@ app.get("/streams", verificarClave, async (req, res) => {
   res.json(streams);
 });
 
+// 🔥 NUEVA RUTA PARA ACTUALIZAR URL
+app.post("/update", async (req, res) => {
+  if (req.query.key !== API_KEY) return res.send("No autorizado");
+
+  const { id, url } = req.body;
+
+  await collection.updateOne(
+    { _id: new ObjectId(id) },
+    { $set: { url: url } }
+  );
+
+  res.json({ ok: true });
+});
+
 // ➕ agregar
 app.post("/add", async (req, res) => {
   if (req.query.key !== API_KEY) return res.send("No autorizado");
@@ -126,57 +137,7 @@ app.post("/add", async (req, res) => {
   res.redirect(`/admin?key=${API_KEY}`);
 });
 
-// 🔥 bulk
-app.post("/bulk", async (req, res) => {
-  if (req.query.key !== API_KEY) return res.send("No autorizado");
-
-  const { data } = req.body;
-
-  let currentCategory = "Otros";
-  const lines = data.split("\n");
-
-  for (let line of lines) {
-    line = line.trim();
-
-    if (line.startsWith("//")) {
-      currentCategory = line.replace("//", "").trim();
-      continue;
-    }
-
-    const parts = line.split("|");
-
-    if (parts.length === 2) {
-      await collection.insertOne({
-        name: parts[0].trim(),
-        url: parts[1].trim(),
-        category: currentCategory,
-        status: "unknown"
-      });
-    }
-  }
-
-  res.redirect(`/admin?key=${API_KEY}`);
-});
-
-// ❌ eliminar
-app.get("/delete/:id", async (req, res) => {
-  if (req.query.key !== API_KEY) return res.send("No autorizado");
-
-  await collection.deleteOne({ _id: new ObjectId(req.params.id) });
-
-  res.redirect(`/admin?key=${API_KEY}`);
-});
-
-// ❌ borrar todo
-app.get("/deleteAll", async (req, res) => {
-  if (req.query.key !== API_KEY) return res.send("No autorizado");
-
-  await collection.deleteMany({});
-
-  res.redirect(`/admin?key=${API_KEY}`);
-});
-
-// 🔐 PANEL CON PAUSA
+// 🔥 PANEL ADMIN MEJORADO
 app.get("/admin", async (req, res) => {
 
   if (req.query.key !== API_KEY) return res.send("No autorizado");
@@ -192,73 +153,57 @@ app.get("/admin", async (req, res) => {
   let html = `
   <html>
   <head>
-    <title>Panel</title>
+    <title>Panel IPTV</title>
 
     <script>
-      let autoRefresh = true;
+      async function guardar(id) {
+        const url = document.getElementById("url-" + id).value;
 
-      function toggleRefresh() {
-        autoRefresh = !autoRefresh;
-        document.getElementById("btnRefresh").innerText =
-          autoRefresh ? "⏸ Pausar" : "▶ Reanudar";
+        await fetch("/update?key=${API_KEY}", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id: id, url: url })
+        });
+
+        alert("Guardado");
       }
-
-      setInterval(() => {
-        if (autoRefresh) location.reload();
-      }, 10000);
     </script>
 
     <style>
-      body { font-family: Arial; }
-      .cat { margin-top:20px; }
-      button { padding:8px; }
+      body { font-family: Arial; background:#111; color:white; }
+      table { width:100%; border-collapse: collapse; }
+      td, th { padding:10px; border-bottom:1px solid #333; }
+      input { width:100%; padding:5px; }
+      button { padding:5px 10px; cursor:pointer; }
     </style>
   </head>
+
   <body>
 
-  <h2>Panel de Canales</h2>
-
-  <button id="btnRefresh" onclick="toggleRefresh()">⏸ Pausar</button>
-
-  <a href="/deleteAll?key=${API_KEY}">
-    <button style="background:red;color:white;">🗑 Borrar todo</button>
-  </a>
-
-  <hr/>
-
-  <form method="POST" action="/add?key=${API_KEY}">
-    <input name="name" placeholder="Nombre">
-    <input name="url" placeholder="URL">
-    <input name="category" placeholder="Categoría">
-    <button>Agregar</button>
-  </form>
-
-  <hr/>
-
-  <h3>Agregar masivo</h3>
-  <form method="POST" action="/bulk?key=${API_KEY}">
-    <textarea name="data" rows="10" cols="50"></textarea><br/>
-    <button>Agregar todo</button>
-  </form>
-
+  <h2>Panel IPTV</h2>
   <hr/>
   `;
 
   for (let cat in grouped) {
 
-    html += `<div class="cat"><h3>📂 ${cat}</h3><ul>`;
+    html += `<h3>📂 ${cat}</h3><table>`;
 
     grouped[cat].forEach(s => {
       html += `
-        <li>
-          ${s.status === "online" ? "🟢" : "🔴"}
-          ${s.name}
-          <a href="/delete/${s._id}?key=${API_KEY}">❌</a>
-        </li>
+      <tr>
+        <td>${s.status === "online" ? "🟢" : "🔴"}</td>
+        <td>${s.name}</td>
+        <td>
+          <input id="url-${s._id}" value="${s.url}" />
+        </td>
+        <td>
+          <button onclick="guardar('${s._id}')">Guardar</button>
+        </td>
+      </tr>
       `;
     });
 
-    html += "</ul></div>";
+    html += "</table>";
   }
 
   html += "</body></html>";

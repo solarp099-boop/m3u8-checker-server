@@ -49,13 +49,23 @@ app.get("/streams", verificarClave, (req, res) => {
 });
 
 // ➕ Agregar
-app.post("/add", (req, res) => {
+app.post("/add", async (req, res) => {
+
   const key = req.query.key;
   if (key !== API_KEY) return res.send("No autorizado");
 
   const { name, url } = req.body;
 
-  streams.push({ name, url, status: "unknown" });
+  let status = "offline";
+
+  try {
+    const response = await axios.get(url, { timeout: 5000 });
+    if (response.status === 200) status = "online";
+  } catch (e) {
+    status = "offline";
+  }
+
+  streams.push({ name, url, status });
 
   fs.writeFileSync("streams.json", JSON.stringify(streams, null, 2));
 

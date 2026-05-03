@@ -12,7 +12,8 @@ app.use(express.urlencoded({ extended: true }));
 const API_KEY = process.env.API_KEY || "123456";
 
 // 🔥 MONGODB
-const uri = process.env.MONGO_URI || "mongodb+srv://solarp099:fido2003@cluster0.w2hu3gt.mongodb.net/?retryWrites=true&w=majority";
+const uri = process.env.MONGO_URI;
+
 const client = new MongoClient(uri);
 
 let collection;

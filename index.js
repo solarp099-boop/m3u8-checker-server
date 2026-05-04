@@ -22,6 +22,7 @@ async function conectarDB() {
   } catch (e) { console.error("❌ Error MongoDB:", e); }
 }
 
+// Checker de estado
 let checking = false;
 async function checkStreams() {
   if (checking || !collection) return;
@@ -61,17 +62,22 @@ app.get("/streams", async (req, res) => {
 app.post("/addSpecific", async (req, res) => {
   if (req.query.key !== API_KEY) return res.status(401).send("No autorizado");
   const { name, url, category, targetId } = req.body;
+  
   let newDate = new Date();
   if (targetId) {
-    const target = await collection.findOne({ _id: new ObjectId(targetId) });
-    if (target) {
-      const previous = await collection.find({ createdAt: { $lt: target.createdAt } })
-                                       .sort({ createdAt: -1 }).limit(1).toArray();
-      const prevTime = previous.length > 0 ? previous[0].createdAt.getTime() : target.createdAt.getTime() - 1000;
-      const targetTime = target.createdAt.getTime();
-      newDate = new Date((prevTime + targetTime) / 2);
-    }
+    try {
+      const target = await collection.findOne({ _id: new ObjectId(targetId) });
+      if (target) {
+        const previous = await collection.find({ createdAt: { $lt: target.createdAt } })
+                                         .sort({ createdAt: -1 }).limit(1).toArray();
+        
+        const prevTime = previous.length > 0 ? previous[0].createdAt.getTime() : target.createdAt.getTime() - 1000;
+        const targetTime = target.createdAt.getTime();
+        newDate = new Date((prevTime + targetTime) / 2);
+      }
+    } catch (e) { console.error("Error en addSpecific:", e); }
   }
+
   await collection.insertOne({ name, url, category: category || "Otros", status: "unknown", createdAt: newDate });
   res.redirect(`/admin?key=${API_KEY}`);
 });
@@ -110,8 +116,10 @@ app.post("/addBulk", async (req, res) => {
     const parts = line.split(",");
     if (parts.length >= 2) {
       toInsert.push({
-        name: parts[0].trim(), url: parts[1].trim(),
-        category: category || "Otros", status: "unknown",
+        name: parts[0].trim(),
+        url: parts[1].trim(),
+        category: category || "Otros",
+        status: "unknown",
         createdAt: new Date(baseTime + index)
       });
     }
@@ -124,203 +132,197 @@ app.post("/addBulk", async (req, res) => {
 
 app.get("/admin", async (req, res) => {
   if (req.query.key !== API_KEY) return res.send("No autorizado");
-  const streams = await collection.find().sort({ createdAt: 1 }).toArray();
-  const categoriasFijas = ["Cine", "Radio", "Infantiles", "Entretenimiento", "Deportes", "Nacionales"];
-  const todasLasCategorias = [...new Set([...categoriasFijas, ...streams.map(s => s.category)])];
+  
+  try {
+    const streams = await collection.find().sort({ createdAt: 1 }).toArray();
+    const categoriasFijas = ["Cine", "Radio", "Infantiles", "Entretenimiento", "Deportes", "Nacionales"];
+    const todasLasCategorias = [...new Set([...categoriasFijas, ...streams.map(s => s.category)])];
 
-  let html = `
-  <!DOCTYPE html>
-  <html>
-  <head>
-    <title>IPTV Manager PRO</title>
-    <style>
-      :root { --bg: #0f0f0f; --card: #1a1a1a; --primary: #3d5afe; --danger: #ff1744; --success: #28a745; --text: #ffffff; }
-      body { font-family: 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); margin: 0; padding: 20px; }
-      .header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; border-bottom: 1px solid #333; padding-bottom: 15px; }
-      .nav-menu { display: flex; gap: 10px; }
-      .nav-btn { background: #333; border: none; color: white; padding: 10px 18px; cursor: pointer; border-radius: 8px; font-weight: bold; }
-      .nav-btn.active { background: var(--primary); }
-      .view-container { display: none; background: var(--card); padding: 20px; border-radius: 12px; }
-      .view-container.active { display: block; }
-      .bulk-section { background: #222; padding: 15px; border-radius: 8px; margin-bottom: 20px; border-left: 4px solid var(--primary); }
-      textarea { width: 100%; background: #000; color: #0f0; border: 1px solid #444; padding: 10px; font-family: monospace; border-radius: 4px; resize: vertical; }
-      .btn-danger-all { background: var(--danger); color: white; border: none; padding: 8px 15px; border-radius: 5px; cursor: pointer; font-weight: bold; margin-bottom: 15px; }
-      table { width: 100%; border-collapse: collapse; }
-      td { padding: 10px; border-bottom: 1px solid #2a2a2a; position: relative; }
-      .btn-play { background: #444; border: none; color: white; padding: 8px 15px; border-radius: 5px; cursor: pointer; }
-      .btn-plus { background: var(--success); color: white; border: none; padding: 4px 8px; border-radius: 4px; cursor: pointer; font-size: 12px; }
-      .btn-top-add { background: none; border: 1px dashed #555; color: #888; width: 100%; padding: 2px; cursor: pointer; border-radius: 4px; margin-bottom: 5px; font-size: 10px; transition: 0.3s; }
-      .btn-top-add:hover { border-color: var(--success); color: var(--success); }
-      .insert-box { display: none; background: #222; padding: 10px; border-left: 4px solid var(--success); margin: 5px 0; border-radius: 4px; }
-      .input-url { width: 100%; background: #0a0a0a; border: 1px solid #333; color: #ccc; padding: 8px; border-radius: 4px; }
-      .cat-badge { font-size: 10px; background: #333; padding: 2px 6px; border-radius: 10px; color: #aaa; }
-    </style>
-  </head>
-  <body>
+    let html = `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <title>IPTV Manager - Control Total</title>
+      <style>
+        :root { --bg: #0f0f0f; --card: #1a1a1a; --primary: #3d5afe; --danger: #ff1744; --success: #28a745; --text: #ffffff; }
+        body { font-family: 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); margin: 0; padding: 20px; }
+        .header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; border-bottom: 1px solid #333; padding-bottom: 15px; }
+        .nav-menu { display: flex; gap: 10px; }
+        .nav-btn { background: #333; border: none; color: white; padding: 10px 18px; cursor: pointer; border-radius: 8px; font-weight: bold; }
+        .nav-btn.active { background: var(--primary); }
+        .view-container { display: none; background: var(--card); padding: 20px; border-radius: 12px; }
+        .view-container.active { display: block; }
+        .bulk-section { background: #222; padding: 15px; border-radius: 8px; margin-bottom: 20px; border-left: 4px solid var(--primary); }
+        textarea { width: 100%; background: #000; color: #0f0; border: 1px solid #444; padding: 10px; font-family: monospace; border-radius: 4px; resize: vertical; }
+        .btn-danger-all { background: var(--danger); color: white; border: none; padding: 8px 15px; border-radius: 5px; cursor: pointer; font-weight: bold; margin-bottom: 15px; }
+        table { width: 100%; border-collapse: collapse; }
+        td { padding: 10px; border-bottom: 1px solid #2a2a2a; position: relative; }
+        .btn-play { background: #444; border: none; color: white; padding: 8px 15px; border-radius: 5px; cursor: pointer; }
+        .btn-plus { background: var(--success); color: white; border: none; padding: 4px 8px; border-radius: 4px; cursor: pointer; font-size: 12px; }
+        .btn-top-add { background: none; border: 1px dashed #555; color: #888; width: 100%; padding: 2px; cursor: pointer; border-radius: 4px; margin-bottom: 5px; font-size: 10px; transition: 0.3s; }
+        .btn-top-add:hover { border-color: var(--success); color: var(--success); }
+        .insert-box { display: none; background: #222; padding: 10px; border-left: 4px solid var(--success); margin: 5px 0; border-radius: 4px; }
+        .input-url { width: 100%; background: #0a0a0a; border: 1px solid #333; color: #ccc; padding: 8px; border-radius: 4px; }
+        .cat-badge { font-size: 10px; background: #333; padding: 2px 6px; border-radius: 10px; color: #aaa; }
+      </style>
+    </head>
+    <body>
 
-    <div class="header">
-      <div style="display:flex; align-items:center; gap:15px;">
-        <h2 style="margin:0;">📺 IPTV Manager</h2>
-        <button id="btnAutoRefresh" class="btn-play" onclick="toggleRefresh()">⏸ Pausar</button>
-      </div>
-      <div class="nav-menu">
-        <button class="nav-btn active" onclick="showView('all', this)">Todas las Señales</button>
-        <button class="nav-btn" onclick="showView('categories', this)">Por Categoría</button>
-        <button class="nav-btn" onclick="showView('main', this)">Pantalla Principal</button>
-      </div>
-    </div>
-
-    <div class="bulk-section">
-      <h4 style="margin:0 0 10px 0;">➕ Carga Masiva</h4>
-      <form method="POST" action="/addBulk?key=${API_KEY}">
-        <textarea name="list" rows="2" placeholder="Nombre, URL"></textarea>
-        <div style="margin-top:10px; display:flex; gap:10px;">
-          <input name="category" id="bulkCatInput" placeholder="Categoría" style="background:#000; color:white; border:1px solid #444; padding:8px; flex:1; border-radius:4px;">
-          <button class="nav-btn" style="background:var(--success)">Agregar al final</button>
+      <div class="header">
+        <div style="display:flex; align-items:center; gap:15px;">
+          <h2 style="margin:0;">📺 IPTV Manager</h2>
+          <button id="btnAutoRefresh" class="btn-play" onclick="toggleRefresh()">⏸ Pausar</button>
         </div>
-      </form>
-    </div>
+        <div class="nav-menu">
+          <button class="nav-btn active" onclick="showView('all', this)">Todas las Señales</button>
+          <button class="nav-btn" onclick="showView('categories', this)">Por Categoría</button>
+          <button class="nav-btn" onclick="showView('main', this)">Pantalla Principal</button>
+        </div>
+      </div>
 
-    <div id="view-all" class="view-container active">
-      <button class="btn-danger-all" onclick="borrarMasivo('all')">🗑 Borrar TODO</button>
-      <table id="table-all">${streams.map(s => renderRowTemplate(s, API_KEY)).join('')}</table>
-    </div>
+      <div class="bulk-section">
+        <h4 style="margin:0 0 10px 0;">➕ Carga Masiva</h4>
+        <form method="POST" action="/addBulk?key=${API_KEY}">
+          <textarea name="list" rows="2" placeholder="Nombre, URL"></textarea>
+          <div style="margin-top:10px; display:flex; gap:10px;">
+            <input name="category" id="bulkCatInput" placeholder="Categoría" style="background:#000; color:white; border:1px solid #444; padding:8px; flex:1; border-radius:4px;">
+            <button class="nav-btn" style="background:var(--success)">Agregar al final</button>
+          </div>
+        </form>
+      </div>
 
-    <div id="view-categories" class="view-container">
-       <div style="margin-bottom:15px; display:flex; gap:5px; flex-wrap:wrap;">
-         ${todasLasCategorias.map(cat => `<button class="nav-btn" style="font-size:11px; padding:6px 12px;" onclick="filterCat('${cat}')">${cat}</button>`).join('')}
-       </div>
-       <div id="cat-actions" style="display:none">
-          <button class="btn-danger-all" id="btnDelCat">🗑 Limpiar Categoría</button>
-          <table id="cat-table-body"></table>
-       </div>
-    </div>
+      <div id="view-all" class="view-container active">
+        <button class="btn-danger-all" onclick="borrarMasivo('all')">🗑 Borrar TODO</button>
+        <table>${streams.map(s => renderRow(s)).join('')}</table>
+      </div>
 
-    <div id="view-main" class="view-container">
-       <button class="btn-danger-all" onclick="borrarMasivo('main')">🗑 Limpiar Nacionales</button>
-       <table id="table-main">${streams.filter(s => s.category === "Nacionales").map(s => renderRowTemplate(s, API_KEY)).join('')}</table>
-    </div>
+      <div id="view-categories" class="view-container">
+         <div style="margin-bottom:15px; display:flex; gap:5px; flex-wrap:wrap;">
+           ${todasLasCategorias.map(cat => `<button class="nav-btn" style="font-size:11px; padding:6px 12px;" onclick="filterCat('${cat}')">${cat}</button>`).join('')}
+         </div>
+         <div id="cat-actions" style="display:none">
+            <button class="btn-danger-all" id="btnDelCat">🗑 Limpiar Categoría</button>
+            <table id="cat-table-body"></table>
+         </div>
+      </div>
 
-    <script>
-      const API_KEY = "${API_KEY}";
-      const allStreams = ${JSON.stringify(streams)};
-      let autoRefresh = true;
+      <div id="view-main" class="view-container">
+         <button class="btn-danger-all" onclick="borrarMasivo('main')">🗑 Limpiar Nacionales</button>
+         <table>${streams.filter(s => s.category === "Nacionales").map(s => renderRow(s)).join('')}</table>
+      </div>
 
-      function toggleRefresh() { 
-        autoRefresh = !autoRefresh; 
-        document.getElementById("btnAutoRefresh").innerText = autoRefresh ? "⏸ Pausar" : "▶ Reanudar"; 
-      }
-      
-      setInterval(() => { if(autoRefresh) location.reload(); }, 40000);
+      <script>
+        const API_KEY = "${API_KEY}";
+        let autoRefresh = true;
+        const allStreams = ${JSON.stringify(streams)};
 
-      function showView(view, btn) {
-        document.querySelectorAll('.view-container').forEach(v => v.classList.remove('active'));
-        document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
-        document.getElementById('view-' + view).classList.add('active');
-        btn.classList.add('active');
-        if(view === 'main') document.getElementById('bulkCatInput').value = 'Nacionales';
-      }
+        function toggleRefresh() { autoRefresh = !autoRefresh; document.getElementById("btnAutoRefresh").innerText = autoRefresh ? "⏸ Pausar" : "▶ Reanudar"; }
+        setInterval(() => { if(autoRefresh) location.reload(); }, 40000);
 
-      function showInsert(id) {
-        const box = document.getElementById('insert-' + id);
-        if(!box) return;
-        const isVisible = box.style.display === 'block';
-        document.querySelectorAll('.insert-box').forEach(b => b.style.display = 'none');
-        box.style.display = isVisible ? 'none' : 'block';
-      }
+        function showView(view, btn) {
+          document.querySelectorAll('.view-container').forEach(v => v.classList.remove('active'));
+          document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+          document.getElementById('view-' + view).classList.add('active');
+          btn.classList.add('active');
+          if(view === 'main') document.getElementById('bulkCatInput').value = 'Nacionales';
+        }
 
-      function filterCat(cat) {
-        document.getElementById('cat-actions').style.display = 'block';
-        document.getElementById('btnDelCat').onclick = () => borrarMasivo('category', cat);
-        document.getElementById('bulkCatInput').value = cat;
-        const filtered = allStreams.filter(s => s.category === cat);
-        document.getElementById('cat-table-body').innerHTML = filtered.map(s => {
-            // Renderizado idéntico para que el JS no falle
-            return \`${renderRowTemplateJS()}\`;
-        }).join('');
-      }
+        function showInsert(id) {
+          const box = document.getElementById('insert-' + id);
+          if(!box) return;
+          const isVisible = box.style.display === 'block';
+          document.querySelectorAll('.insert-box').forEach(b => b.style.display = 'none');
+          box.style.display = isVisible ? 'none' : 'block';
+        }
 
-      // Esta función genera el HTML dentro del navegador para el filtrado
-      function renderRowTemplateJS() {
-          return \`
-            <tr>
-              <td width="30">\${arguments[0].status === 'online' ? '🟢' : '🔴'}</td>
-              <td width="220">
-                <button class="btn-top-add" onclick="showInsert('\${arguments[0]._id}')">➕ Agregar encima de \${arguments[0].name}</button>
-                <div id="insert-\${arguments[0]._id}" class="insert-box">
-                   <form method="POST" action="/addSpecific?key=\${API_KEY}">
-                     <input name="name" placeholder="Nombre" style="width:90%; margin-bottom:5px;" required>
-                     <input name="url" placeholder="URL" style="width:90%; margin-bottom:5px;" required>
-                     <input type="hidden" name="category" value="\${arguments[0].category}">
-                     <input type="hidden" name="targetId" value="\${arguments[0]._id}">
-                     <button class="btn-plus">Añadir aquí</button>
-                   </form>
-                </div>
-                <b>\${arguments[0].name}</b><br/>
-                <span class="cat-badge">\${arguments[0].category}</span><br/>
-                <button class="btn-plus" style="margin-top:5px" onclick="showInsert('\${arguments[0]._id}_below')">+</button>
-                <div id="insert-\${arguments[0]._id}_below" class="insert-box">
-                   <form method="POST" action="/addSpecific?key=\${API_KEY}">
-                     <input name="name" placeholder="Nombre" style="width:90%;" required>
-                     <input name="url" placeholder="URL" style="width:90%;" required>
-                     <input type="hidden" name="category" value="\${arguments[0].category}">
-                     <button class="btn-plus">Añadir al final</button>
-                   </form>
-                </div>
-              </td>
-              <td><input class="input-url" id="url-\${arguments[0]._id}" value="\${arguments[0].url}"></td>
-              <td width="100">
-                <button class="btn-play" onclick="guardar('\${arguments[0]._id}')">💾</button>
-                <button class="btn-play" style="background:var(--danger)" onclick="eliminar('\${arguments[0]._id}')">❌</button>
-              </td>
-            </tr>\`;
-      }
+        function filterCat(cat) {
+          document.getElementById('cat-actions').style.display = 'block';
+          document.getElementById('btnDelCat').onclick = () => borrarMasivo('category', cat);
+          document.getElementById('bulkCatInput').value = cat;
+          const filtered = allStreams.filter(s => s.category === cat);
+          document.getElementById('cat-table-body').innerHTML = filtered.map(s => {
+              return \`<tr>
+                <td width="30">\${s.status === 'online' ? '🟢' : '🔴'}</td>
+                <td width="220">
+                  <button class="btn-top-add" onclick="showInsert('\${s._id}')">➕ Agregar encima de \${s.name}</button>
+                  <div id="insert-\${s._id}" class="insert-box">
+                     <form method="POST" action="/addSpecific?key=\${API_KEY}">
+                       <input name="name" placeholder="Nombre" style="width:90%; margin-bottom:5px;" required>
+                       <input name="url" placeholder="URL" style="width:90%; margin-bottom:5px;" required>
+                       <input type="hidden" name="category" value="\${s.category}">
+                       <input type="hidden" name="targetId" value="\${s._id}">
+                       <button class="btn-plus">Añadir aquí</button>
+                     </form>
+                  </div>
+                  <b>\${s.name}</b><br/>
+                  <span class="cat-badge">\${s.category}</span><br/>
+                  <button class="btn-plus" style="margin-top:5px" onclick="showInsert('\${s._id}_below')">+</button>
+                  <div id="insert-\${s._id}_below" class="insert-box">
+                     <form method="POST" action="/addSpecific?key=\${API_KEY}">
+                       <input name="name" placeholder="Nombre" style="width:90%;" required>
+                       <input name="url" placeholder="URL" style="width:90%;" required>
+                       <input type="hidden" name="category" value="\${s.category}">
+                       <button class="btn-plus">Añadir al final</button>
+                     </form>
+                  </div>
+                </td>
+                <td><input class="input-url" id="url-\${s._id}" value="\${s.url}"></td>
+                <td width="100">
+                  <button class="btn-play" onclick="guardar('\${s._id}')">💾</button>
+                  <button class="btn-play" style="background:var(--danger)" onclick="eliminar('\${s._id}')">❌</button>
+                </td>
+              </tr>\`;
+          }).join('');
+        }
 
-      async function guardar(id) {
-        const url = document.getElementById("url-" + id).value;
-        await fetch("/update?key=" + API_KEY, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ id, url })
-        });
-        alert("Guardado");
-      }
+        async function guardar(id) {
+          const url = document.getElementById("url-" + id).value;
+          await fetch("/update?key=" + API_KEY, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ id, url })
+          });
+          alert("Guardado");
+        }
 
-      async function eliminar(id) {
-        if(!confirm("¿Eliminar?")) return;
-        await fetch("/deleteStream?key=" + API_KEY, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ id })
-        });
-        location.reload();
-      }
+        async function eliminar(id) {
+          if(!confirm("¿Eliminar?")) return;
+          await fetch("/deleteStream?key=" + API_KEY, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ id })
+          });
+          location.reload();
+        }
 
-      async function borrarMasivo(type, value = '') {
-        if (!confirm("¿Borrar sección?")) return;
-        await fetch("/deleteAll?key=" + API_KEY, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ filterType: type, filterValue: value })
-        });
-        location.reload();
-      }
-    </script>
-  </body>
-  </html>
-  `;
-  res.send(html);
+        async function borrarMasivo(type, value = '') {
+          if (!confirm("¿Borrar sección?")) return;
+          await fetch("/deleteAll?key=" + API_KEY, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ filterType: type, filterValue: value })
+          });
+          location.reload();
+        }
+      </script>
+    </body>
+    </html>
+    `;
+    res.send(html);
+  } catch (err) {
+    console.error(err);
+    res.status(500).send("Error interno en el panel");
+  }
 });
 
-// Función de ayuda para el renderizado inicial del servidor
-function renderRowTemplate(s, key) {
+function renderRow(s) {
   return `
     <tr>
       <td width="30">${s.status === 'online' ? '🟢' : '🔴'}</td>
       <td width="220">
         <button class="btn-top-add" onclick="showInsert('${s._id}')">➕ Agregar encima de ${s.name}</button>
         <div id="insert-${s._id}" class="insert-box">
-           <form method="POST" action="/addSpecific?key=${key}">
+           <form method="POST" action="/addSpecific?key=${API_KEY}">
              <input name="name" placeholder="Nombre" style="width:90%; margin-bottom:5px;" required>
              <input name="url" placeholder="URL" style="width:90%; margin-bottom:5px;" required>
              <input type="hidden" name="category" value="${s.category}">
@@ -332,7 +334,7 @@ function renderRowTemplate(s, key) {
         <span class="cat-badge">${s.category}</span><br/>
         <button class="btn-plus" style="margin-top:5px" onclick="showInsert('${s._id}_below')">+</button>
         <div id="insert-${s._id}_below" class="insert-box">
-           <form method="POST" action="/addSpecific?key=${key}">
+           <form method="POST" action="/addSpecific?key=${API_KEY}">
              <input name="name" placeholder="Nombre" style="width:90%;" required>
              <input name="url" placeholder="URL" style="width:90%;" required>
              <input type="hidden" name="category" value="${s.category}">
@@ -349,4 +351,4 @@ function renderRowTemplate(s, key) {
 }
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log("🚀 Panel Corregido y Universal"));
+app.listen(PORT, () => console.log("🚀 Servidor con Inserción Específica Corregido"));

@@ -236,6 +236,29 @@ app.post('/delete', (req, res) => {
         return Array.from(checks).map(c => c.value);
       }
 
+      // 🔥 SOLO AGREGO ESTA FUNCIÓN dentro de <script>
+function filtrarSeccion(seccion) {
+  const filas = document.querySelectorAll(".fila");
+
+  filas.forEach(f => {
+    let sections = f.getAttribute("data-sections");
+
+    try {
+      sections = JSON.parse(sections);
+    } catch {
+      sections = [];
+    }
+
+    if (seccion === "todos") {
+      f.style.display = "";
+    } else if (sections.includes(seccion)) {
+      f.style.display = "";
+    } else {
+      f.style.display = "none";
+    }
+  });
+}
+
       setInterval(() => {
         if (autoRefresh) location.reload();
       }, 10000);
@@ -301,6 +324,13 @@ app.post('/delete', (req, res) => {
 
   <h2>Panel IPTV</h2>
 
+  <div style="margin-bottom:20px;">
+  <button onclick="filtrarSeccion('main')">📺 MainActivity</button>
+  <button onclick="filtrarSeccion('all')">📋 Todas</button>
+  <button onclick="filtrarSeccion('categoria')">🗂 Categorías</button>
+  <button onclick="filtrarSeccion('todos')">🌐 Ver todo</button>
+</div>
+
   <button id="btnRefresh" onclick="toggleRefresh()">⏸ Pausar</button>
   <button onclick="filtrarOffline()">🔴 Solo caídos</button>
   <button onclick="mostrarTodos()">🟢 Mostrar todos</button>
@@ -342,7 +372,7 @@ app.post('/delete', (req, res) => {
     grouped[cat].forEach(s => {
 
       html += `
-      <tr class="fila" data-name="${s.name}" data-status="${s.status}">
+      <tr class="fila" data-name="${s.name}" data-status="${s.status}" data-sections='${JSON.stringify(s.sections || [])}'>
         <td>${s.status === "online" ? "🟢" : "🔴"}</td>
         <td>${s.name}</td>
         <td>

@@ -123,6 +123,19 @@ app.post("/update", async (req, res) => {
   res.json({ ok: true });
 });
 
+// ❌ ELIMINAR CANAL (MONGODB)
+app.post("/deleteStream", async (req, res) => {
+  if (req.query.key !== API_KEY) return res.send("No autorizado");
+
+  const { id } = req.body;
+
+  await collection.deleteOne({
+    _id: new ObjectId(id)
+  });
+
+  res.json({ ok: true });
+});
+
 // ➕ agregar
 app.post("/add", async (req, res) => {
   if (req.query.key !== API_KEY) return res.send("No autorizado");
@@ -223,6 +236,7 @@ app.post('/delete', (req, res) => {
           f.style.display = nombre.includes(input) ? "" : "none";
         });
       }
+      
 
       function filtrarOffline() {
         let filas = document.querySelectorAll(".fila");
@@ -235,6 +249,17 @@ app.post('/delete', (req, res) => {
 
       function mostrarTodos() {
         document.querySelectorAll(".fila").forEach(f => f.style.display = "");
+      }
+
+      async function eliminar(id) {
+        if (!confirm("Eliminar canal?")) return;
+
+        await fetch("/deleteStream?key=${API_KEY}", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id: id })
+        });
+        location.reload();
       }
 
       async function guardar(id) {
@@ -301,6 +326,7 @@ app.post('/delete', (req, res) => {
         </td>
         <td>
           <button onclick="guardar('${s._id}')">Guardar</button>
+          <button onclick="eliminar('${s._id}')">❌</button>
         </td>
       </tr>
       `;

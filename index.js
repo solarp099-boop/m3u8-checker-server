@@ -73,12 +73,14 @@ app.post("/deleteStream", async (req, res) => {
   res.json({ ok: true });
 });
 
+// Lógica de borrado corregida: Borra canales, no categorías
 app.post("/deleteAll", async (req, res) => {
   if (req.query.key !== API_KEY) return res.status(401).send("No autorizado");
   const { filterType, filterValue } = req.body;
   let query = {};
   if (filterType === "category") query = { category: filterValue };
-  if (filterType === "main") query = { category: { $regex: /nacionales/i } };
+  if (filterType === "main") query = { category: "Nacionales" };
+  
   await collection.deleteMany(query);
   res.json({ ok: true });
 });
@@ -116,7 +118,9 @@ app.post("/addBulk", async (req, res) => {
 app.get("/admin", async (req, res) => {
   if (req.query.key !== API_KEY) return res.send("No autorizado");
   const streams = await collection.find().sort({ name: 1 }).toArray();
-  const categoriasUnicas = [...new Set(streams.map(s => s.category))];
+  const categoriasFijas = ["Cine", "Radio", "Infantiles", "Entretenimiento", "Deportes", "Nacionales"];
+  const categoriasDinamicas = [...new Set(streams.map(s => s.category))];
+  const todasLasCategorias = [...new Set([...categoriasFijas, ...categoriasDinamicas])];
 
   let html = `
   <!DOCTYPE html>
@@ -161,7 +165,7 @@ app.get("/admin", async (req, res) => {
     <div class="bulk-section">
       <h4 style="margin:0 0 10px 0;">➕ Carga Masiva (Formato: Nombre, URL)</h4>
       <form method="POST" action="/addBulk?key=${API_KEY}">
-        <textarea name="list" rows="2" placeholder="Willax, http://...&#10;Latina, http://..."></textarea>
+        <textarea name="list" rows="3" placeholder="Willax, http://...&#10;Latina, http://..."></textarea>
         <div style="margin-top:10px; display:flex; gap:10px;">
           <input name="category" id="bulkCatInput" placeholder="Categoría para este grupo" style="background:#000; color:white; border:1px solid #444; padding:8px; flex:1; border-radius:4px;">
           <button class="nav-btn" style="background:var(--success)">Agregar Lista</button>
@@ -176,17 +180,17 @@ app.get("/admin", async (req, res) => {
 
     <div id="view-categories" class="view-container">
        <div style="margin-bottom:15px; display:flex; gap:5px; flex-wrap:wrap;">
-         ${categoriasUnicas.map(cat => `<button class="nav-btn" style="font-size:11px; padding:6px 12px;" onclick="filterCat('${cat}')">${cat}</button>`).join('')}
+         ${todasLasCategorias.map(cat => `<button class="nav-btn" style="font-size:11px; padding:6px 12px;" onclick="filterCat('${cat}')">${cat}</button>`).join('')}
        </div>
        <div id="cat-actions" style="display:none">
-          <button class="btn-danger-all" id="btnDelCat" onclick="">🗑 Borrar Categoría</button>
+          <button class="btn-danger-all" id="btnDelCat" onclick="">🗑 Limpiar Canales de esta Categoría</button>
           <table id="cat-table-body"></table>
        </div>
     </div>
 
     <div id="view-main" class="view-container">
-       <button class="btn-danger-all" onclick="borrarMasivo('main')">🗑 Limpiar Pantalla Principal</button>
-       <table>${streams.filter(s => s.category.toLowerCase() === "nacionales").map(s => renderRow(s)).join('')}</table>
+       <button class="btn-danger-all" onclick="borrarMasivo('main')">🗑 Limpiar Canales Nacionales</button>
+       <table>${streams.filter(s => s.category === "Nacionales").map(s => renderRow(s)).join('')}</table>
     </div>
 
     <script>
@@ -195,7 +199,7 @@ app.get("/admin", async (req, res) => {
         autoRefresh = !autoRefresh;
         document.getElementById("btnAutoRefresh").innerText = autoRefresh ? "⏸ Pausar" : "▶ Reanudar";
       }
-      setInterval(() => { if(autoRefresh) location.reload(); }, 20000);
+      setInterval(() => { if(autoRefresh) location.reload(); }, 25000);
 
       function showView(view, btn) {
         document.querySelectorAll('.view-container').forEach(v => v.classList.remove('active'));
@@ -213,7 +217,7 @@ app.get("/admin", async (req, res) => {
       }
 
       async function borrarMasivo(type, value = '') {
-        if (!confirm("¿Estás seguro? Esta acción no se puede deshacer.")) return;
+        if (!confirm("¿Borrar todos los canales de esta sección?")) return;
         await fetch("/deleteAll?key=${API_KEY}", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -225,12 +229,39 @@ app.get("/admin", async (req, res) => {
       function filterCat(cat) {
         document.getElementById('cat-actions').style.display = 'block';
         document.getElementById('btnDelCat').onclick = () => borrarMasivo('category', cat);
-        document.getElementById('btnDelCat').innerText = '🗑 Borrar Categoría: ' + cat;
+        document.getElementById('btnDelCat').innerText = '🗑 Limpiar Canales: ' + cat;
         document.getElementById('bulkCatInput').value = cat;
 
         const data = ${JSON.stringify(streams)};
         const filtered = data.filter(s => s.category === cat);
-        document.getElementById('cat-table-body').innerHTML = filtered.map(s => renderRow(s)).join('');
+        document.getElementById('cat-table-body').innerHTML = filtered.length > 0 
+          ? filtered.map(s => renderRowJS(s)).join('')
+          : '<tr><td colspan="4" style="text-align:center; padding:20px; color:#666;">No hay canales en esta categoría</td></tr>';
+      }
+
+      function renderRowJS(s) {
+        return \`
+          <tr>
+            <td width="30">\${s.status === 'online' ? '🟢' : '🔴'}</td>
+            <td width="220">
+              <b>\${s.name}</b><br/>
+              <span class="cat-badge">\${s.category}</span><br/>
+              <button class="btn-plus" onclick="showInsert('\${s._id}')">+</button>
+              <div id="insert-\${s._id}" class="insert-box">
+                 <form method="POST" action="/add?key=${API_KEY}">
+                   <input name="name" placeholder="Nombre" style="width:70px; font-size:10px;" required>
+                   <input name="url" placeholder="URL" style="width:100px; font-size:10px;" required>
+                   <input type="hidden" name="category" value="\${s.category}">
+                   <button style="font-size:10px;">Añadir</button>
+                 </form>
+              </div>
+            </td>
+            <td><input class="input-url" id="url-\${s._id}" value="\${s.url}"></td>
+            <td width="100">
+              <button class="btn-play" onclick="guardar('\${s._id}')">💾</button>
+              <button class="btn-play" style="background:var(--danger)" onclick="eliminar('\${s._id}')">❌</button>
+            </td>
+          </tr>\`;
       }
 
       async function guardar(id) {
@@ -286,4 +317,4 @@ function renderRow(s) {
 }
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log("🚀 Panel Completo Restaurado"));
+app.listen(PORT, () => console.log("🚀 Panel Corregido"));

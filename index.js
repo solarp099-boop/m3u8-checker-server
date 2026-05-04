@@ -223,6 +223,11 @@ app.post('/delete', (req, res) => {
         document.getElementById("btnRefresh").innerText =
           autoRefresh ? "⏸ Pausar" : "▶ Reanudar";
       }
+          
+      function obtenerSecciones() {
+        const checks = document.querySelectorAll("input[type=checkbox]:checked");
+        return Array.from(checks).map(c => c.value);
+      }
 
       setInterval(() => {
         if (autoRefresh) location.reload();

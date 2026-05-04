@@ -22,6 +22,7 @@ async function conectarDB() {
   } catch (e) { console.error("❌ Error MongoDB:", e); }
 }
 
+// Checker de estado
 let checking = false;
 async function checkStreams() {
   if (checking || !collection) return;
@@ -58,20 +59,25 @@ app.get("/streams", async (req, res) => {
   res.json(streams);
 });
 
+// Ruta para añadir en una posición específica (encima de otro)
 app.post("/addSpecific", async (req, res) => {
   if (req.query.key !== API_KEY) return res.status(401).send("No autorizado");
   const { name, url, category, targetId } = req.body;
+  
   let newDate = new Date();
   if (targetId) {
     const target = await collection.findOne({ _id: new ObjectId(targetId) });
     if (target) {
+      // Buscamos el canal inmediatamente anterior para sacar el promedio de tiempo
       const previous = await collection.find({ createdAt: { $lt: target.createdAt } })
                                        .sort({ createdAt: -1 }).limit(1).toArray();
+      
       const prevTime = previous.length > 0 ? previous[0].createdAt.getTime() : target.createdAt.getTime() - 1000;
       const targetTime = target.createdAt.getTime();
-      newDate = new Date((prevTime + targetTime) / 2);
+      newDate = new Date((prevTime + targetTime) / 2); // Punto medio exacto
     }
   }
+
   await collection.insertOne({ name, url, category: category || "Otros", status: "unknown", createdAt: newDate });
   res.redirect(`/admin?key=${API_KEY}`);
 });
@@ -110,8 +116,10 @@ app.post("/addBulk", async (req, res) => {
     const parts = line.split(",");
     if (parts.length >= 2) {
       toInsert.push({
-        name: parts[0].trim(), url: parts[1].trim(),
-        category: category || "Otros", status: "unknown",
+        name: parts[0].trim(),
+        url: parts[1].trim(),
+        category: category || "Otros",
+        status: "unknown",
         createdAt: new Date(baseTime + index)
       });
     }
@@ -126,13 +134,14 @@ app.get("/admin", async (req, res) => {
   if (req.query.key !== API_KEY) return res.send("No autorizado");
   const streams = await collection.find().sort({ createdAt: 1 }).toArray();
   const categoriasFijas = ["Cine", "Radio", "Infantiles", "Entretenimiento", "Deportes", "Nacionales"];
-  const todasLasCategorias = [...new Set([...categoriasFijas, ...streams.map(s => s.category)])];
+  const categoriasDinamicas = [...new Set(streams.map(s => s.category))];
+  const todasLasCategorias = [...new Set([...categoriasFijas, ...categoriasDinamicas])];
 
   let html = `
   <!DOCTYPE html>
   <html>
   <head>
-    <title>IPTV Manager PRO</title>
+    <title>IPTV Manager - Control Total</title>
     <style>
       :root { --bg: #0f0f0f; --card: #1a1a1a; --primary: #3d5afe; --danger: #ff1744; --success: #28a745; --text: #ffffff; }
       body { font-family: 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); margin: 0; padding: 20px; }
@@ -183,7 +192,7 @@ app.get("/admin", async (req, res) => {
 
     <div id="view-all" class="view-container active">
       <button class="btn-danger-all" onclick="borrarMasivo('all')">🗑 Borrar TODO</button>
-      <table id="table-all">${streams.map(s => renderRowTemplate(s, API_KEY)).join('')}</table>
+      <table>${streams.map(s => renderRow(s)).join('')}</table>
     </div>
 
     <div id="view-categories" class="view-container">
@@ -198,19 +207,13 @@ app.get("/admin", async (req, res) => {
 
     <div id="view-main" class="view-container">
        <button class="btn-danger-all" onclick="borrarMasivo('main')">🗑 Limpiar Nacionales</button>
-       <table id="table-main">${streams.filter(s => s.category === "Nacionales").map(s => renderRowTemplate(s, API_KEY)).join('')}</table>
+       <table>${streams.filter(s => s.category === "Nacionales").map(s => renderRow(s)).join('')}</table>
     </div>
 
     <script>
       const API_KEY = "${API_KEY}";
-      const allStreams = ${JSON.stringify(streams)};
       let autoRefresh = true;
-
-      function toggleRefresh() { 
-        autoRefresh = !autoRefresh; 
-        document.getElementById("btnAutoRefresh").innerText = autoRefresh ? "⏸ Pausar" : "▶ Reanudar"; 
-      }
-      
+      function toggleRefresh() { autoRefresh = !autoRefresh; document.getElementById("btnAutoRefresh").innerText = autoRefresh ? "⏸ Pausar" : "▶ Reanudar"; }
       setInterval(() => { if(autoRefresh) location.reload(); }, 40000);
 
       function showView(view, btn) {
@@ -223,57 +226,53 @@ app.get("/admin", async (req, res) => {
 
       function showInsert(id) {
         const box = document.getElementById('insert-' + id);
-        if(!box) return;
         const isVisible = box.style.display === 'block';
         document.querySelectorAll('.insert-box').forEach(b => b.style.display = 'none');
         box.style.display = isVisible ? 'none' : 'block';
+      }
+
+      function renderRowJS(s) {
+        return \`
+          <tr>
+            <td width="30">\${s.status === 'online' ? '🟢' : '🔴'}</td>
+            <td width="220">
+              <button class="btn-top-add" onclick="showInsert('\${s._id}')">➕ Agregar encima de \${s.name}</button>
+              <div id="insert-\${s._id}" class="insert-box">
+                 <form method="POST" action="/addSpecific?key=\${API_KEY}">
+                   <input name="name" placeholder="Nombre" style="width:90%; margin-bottom:5px;" required>
+                   <input name="url" placeholder="URL" style="width:90%; margin-bottom:5px;" required>
+                   <input type="hidden" name="category" value="\${s.category}">
+                   <input type="hidden" name="targetId" value="\${s._id}">
+                   <button class="btn-plus">Añadir aquí</button>
+                 </form>
+              </div>
+              <b>\${s.name}</b><br/>
+              <span class="cat-badge">\${s.category}</span><br/>
+              <button class="btn-plus" style="margin-top:5px" onclick="showInsert('\${s._id}_below')">+</button>
+              <div id="insert-\${s._id}_below" class="insert-box">
+                 <form method="POST" action="/addSpecific?key=\${API_KEY}">
+                   <input name="name" placeholder="Nombre" style="width:90%;" required>
+                   <input name="url" placeholder="URL" style="width:90%;" required>
+                   <input type="hidden" name="category" value="\${s.category}">
+                   <button class="btn-plus">Añadir al final</button>
+                 </form>
+              </div>
+            </td>
+            <td><input class="input-url" id="url-\${s._id}" value="\${s.url}"></td>
+            <td width="100">
+              <button class="btn-play" onclick="guardar('\${s._id}')">💾</button>
+              <button class="btn-play" style="background:var(--danger)" onclick="eliminar('\${s._id}')">❌</button>
+            </td>
+          </tr>\`;
       }
 
       function filterCat(cat) {
         document.getElementById('cat-actions').style.display = 'block';
         document.getElementById('btnDelCat').onclick = () => borrarMasivo('category', cat);
         document.getElementById('bulkCatInput').value = cat;
-        const filtered = allStreams.filter(s => s.category === cat);
-        document.getElementById('cat-table-body').innerHTML = filtered.map(s => {
-            // Renderizado idéntico para que el JS no falle
-            return \`${renderRowTemplateJS()}\`;
-        }).join('');
-      }
-
-      // Esta función genera el HTML dentro del navegador para el filtrado
-      function renderRowTemplateJS() {
-          return \`
-            <tr>
-              <td width="30">\${arguments[0].status === 'online' ? '🟢' : '🔴'}</td>
-              <td width="220">
-                <button class="btn-top-add" onclick="showInsert('\${arguments[0]._id}')">➕ Agregar encima de \${arguments[0].name}</button>
-                <div id="insert-\${arguments[0]._id}" class="insert-box">
-                   <form method="POST" action="/addSpecific?key=\${API_KEY}">
-                     <input name="name" placeholder="Nombre" style="width:90%; margin-bottom:5px;" required>
-                     <input name="url" placeholder="URL" style="width:90%; margin-bottom:5px;" required>
-                     <input type="hidden" name="category" value="\${arguments[0].category}">
-                     <input type="hidden" name="targetId" value="\${arguments[0]._id}">
-                     <button class="btn-plus">Añadir aquí</button>
-                   </form>
-                </div>
-                <b>\${arguments[0].name}</b><br/>
-                <span class="cat-badge">\${arguments[0].category}</span><br/>
-                <button class="btn-plus" style="margin-top:5px" onclick="showInsert('\${arguments[0]._id}_below')">+</button>
-                <div id="insert-\${arguments[0]._id}_below" class="insert-box">
-                   <form method="POST" action="/addSpecific?key=\${API_KEY}">
-                     <input name="name" placeholder="Nombre" style="width:90%;" required>
-                     <input name="url" placeholder="URL" style="width:90%;" required>
-                     <input type="hidden" name="category" value="\${arguments[0].category}">
-                     <button class="btn-plus">Añadir al final</button>
-                   </form>
-                </div>
-              </td>
-              <td><input class="input-url" id="url-\${arguments[0]._id}" value="\${arguments[0].url}"></td>
-              <td width="100">
-                <button class="btn-play" onclick="guardar('\${arguments[0]._id}')">💾</button>
-                <button class="btn-play" style="background:var(--danger)" onclick="eliminar('\${arguments[0]._id}')">❌</button>
-              </td>
-            </tr>\`;
+        const data = ${JSON.stringify(streams)};
+        const filtered = data.filter(s => s.category === cat);
+        document.getElementById('cat-table-body').innerHTML = filtered.map(s => renderRowJS(s)).join('');
       }
 
       async function guardar(id) {
@@ -312,15 +311,15 @@ app.get("/admin", async (req, res) => {
   res.send(html);
 });
 
-// Función de ayuda para el renderizado inicial del servidor
-function renderRowTemplate(s, key) {
+function renderRow(s) {
+  const API_KEY = process.env.API_KEY || "123456";
   return `
     <tr>
       <td width="30">${s.status === 'online' ? '🟢' : '🔴'}</td>
       <td width="220">
         <button class="btn-top-add" onclick="showInsert('${s._id}')">➕ Agregar encima de ${s.name}</button>
         <div id="insert-${s._id}" class="insert-box">
-           <form method="POST" action="/addSpecific?key=${key}">
+           <form method="POST" action="/addSpecific?key=${API_KEY}">
              <input name="name" placeholder="Nombre" style="width:90%; margin-bottom:5px;" required>
              <input name="url" placeholder="URL" style="width:90%; margin-bottom:5px;" required>
              <input type="hidden" name="category" value="${s.category}">
@@ -332,7 +331,7 @@ function renderRowTemplate(s, key) {
         <span class="cat-badge">${s.category}</span><br/>
         <button class="btn-plus" style="margin-top:5px" onclick="showInsert('${s._id}_below')">+</button>
         <div id="insert-${s._id}_below" class="insert-box">
-           <form method="POST" action="/addSpecific?key=${key}">
+           <form method="POST" action="/addSpecific?key=${API_KEY}">
              <input name="name" placeholder="Nombre" style="width:90%;" required>
              <input name="url" placeholder="URL" style="width:90%;" required>
              <input type="hidden" name="category" value="${s.category}">
@@ -349,4 +348,4 @@ function renderRowTemplate(s, key) {
 }
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log("🚀 Panel Corregido y Universal"));
+app.listen(PORT, () => console.log("🚀 Servidor con Inserción Específica"));

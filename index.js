@@ -53,9 +53,10 @@ async function checkStreams() {
 
 // --- APIS DE CONTROL ---
 
+// Modificado: Ahora devuelve los canales por orden de inserción (createdAt)
 app.get("/streams", async (req, res) => {
   if (req.query.key !== API_KEY) return res.status(401).json([]);
-  const streams = await collection.find().sort({ name: 1 }).toArray(); 
+  const streams = await collection.find().sort({ createdAt: 1 }).toArray(); 
   res.json(streams);
 });
 
@@ -73,7 +74,6 @@ app.post("/deleteStream", async (req, res) => {
   res.json({ ok: true });
 });
 
-// Lógica de borrado corregida: Borra canales, no categorías
 app.post("/deleteAll", async (req, res) => {
   if (req.query.key !== API_KEY) return res.status(401).send("No autorizado");
   const { filterType, filterValue } = req.body;
@@ -88,7 +88,13 @@ app.post("/deleteAll", async (req, res) => {
 app.post("/add", async (req, res) => {
   if (req.query.key !== API_KEY) return res.status(401).send("No autorizado");
   const { name, url, category } = req.body;
-  await collection.insertOne({ name, url, category: category || "Otros", status: "unknown" });
+  await collection.insertOne({ 
+    name, 
+    url, 
+    category: category || "Otros", 
+    status: "unknown",
+    createdAt: new Date() 
+  });
   res.redirect(`/admin?key=${API_KEY}`);
 });
 
@@ -97,6 +103,8 @@ app.post("/addBulk", async (req, res) => {
   const { list, category } = req.body;
   const lines = list.split("\n");
   const toInsert = [];
+  const baseTime = Date.now();
+  
   lines.forEach((line, index) => {
     const parts = line.split(",");
     if (parts.length >= 2) {
@@ -105,7 +113,7 @@ app.post("/addBulk", async (req, res) => {
         url: parts[1].trim(),
         category: category || "Otros",
         status: "unknown",
-        createdAt: new Date(Date.now() + index)
+        createdAt: new Date(baseTime + index) // Asegura orden exacto milisegundo a milisegundo
       });
     }
   });
@@ -117,7 +125,9 @@ app.post("/addBulk", async (req, res) => {
 
 app.get("/admin", async (req, res) => {
   if (req.query.key !== API_KEY) return res.send("No autorizado");
-  const streams = await collection.find().sort({ name: 1 }).toArray();
+  
+  // Modificado: Quitamos el sort alfabético por nombre
+  const streams = await collection.find().sort({ createdAt: 1 }).toArray();
   const categoriasFijas = ["Cine", "Radio", "Infantiles", "Entretenimiento", "Deportes", "Nacionales"];
   const categoriasDinamicas = [...new Set(streams.map(s => s.category))];
   const todasLasCategorias = [...new Set([...categoriasFijas, ...categoriasDinamicas])];
@@ -126,7 +136,7 @@ app.get("/admin", async (req, res) => {
   <!DOCTYPE html>
   <html>
   <head>
-    <title>IPTV Manager Pro Ultra</title>
+    <title>IPTV Manager - Orden Real</title>
     <style>
       :root { --bg: #0f0f0f; --card: #1a1a1a; --primary: #3d5afe; --danger: #ff1744; --success: #28a745; --text: #ffffff; }
       body { font-family: 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); margin: 0; padding: 20px; }
@@ -163,9 +173,9 @@ app.get("/admin", async (req, res) => {
     </div>
 
     <div class="bulk-section">
-      <h4 style="margin:0 0 10px 0;">➕ Carga Masiva (Formato: Nombre, URL)</h4>
+      <h4 style="margin:0 0 10px 0;">➕ Carga Masiva (Respeta tu Orden)</h4>
       <form method="POST" action="/addBulk?key=${API_KEY}">
-        <textarea name="list" rows="3" placeholder="Willax, http://...&#10;Latina, http://..."></textarea>
+        <textarea name="list" rows="3" placeholder="Latina, http://...&#10;América, http://..."></textarea>
         <div style="margin-top:10px; display:flex; gap:10px;">
           <input name="category" id="bulkCatInput" placeholder="Categoría para este grupo" style="background:#000; color:white; border:1px solid #444; padding:8px; flex:1; border-radius:4px;">
           <button class="nav-btn" style="background:var(--success)">Agregar Lista</button>
@@ -199,7 +209,7 @@ app.get("/admin", async (req, res) => {
         autoRefresh = !autoRefresh;
         document.getElementById("btnAutoRefresh").innerText = autoRefresh ? "⏸ Pausar" : "▶ Reanudar";
       }
-      setInterval(() => { if(autoRefresh) location.reload(); }, 25000);
+      setInterval(() => { if(autoRefresh) location.reload(); }, 30000);
 
       function showView(view, btn) {
         document.querySelectorAll('.view-container').forEach(v => v.classList.remove('active'));
@@ -317,4 +327,4 @@ function renderRow(s) {
 }
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log("🚀 Panel Corregido"));
+app.listen(PORT, () => console.log("🚀 Panel con Orden Fijo Activado"));

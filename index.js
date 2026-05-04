@@ -1,4 +1,6 @@
 const express = require("express");
+const fs = require("fs")
+const FILE = "./channels.json"
 const axios = require("axios");
 const cors = require("cors");
 const { MongoClient, ObjectId } = require("mongodb");
@@ -149,6 +151,28 @@ app.get("/admin", async (req, res) => {
     if (!grouped[s.category]) grouped[s.category] = [];
     grouped[s.category].push(s);
   });
+
+  // 🔥 OBTENER CANALES
+app.get('/channels', (req, res) => {
+    const data = JSON.parse(fs.readFileSync(FILE))
+    res.json(data)
+})
+
+// 🔥 AGREGAR CANAL
+app.post('/add', (req, res) => {
+    const data = JSON.parse(fs.readFileSync(FILE))
+    data.push(req.body)
+    fs.writeFileSync(FILE, JSON.stringify(data, null, 2))
+    res.json({ ok: true })
+})
+
+// 🔥 ELIMINAR CANAL
+app.post('/delete', (req, res) => {
+    let data = JSON.parse(fs.readFileSync(FILE))
+    data = data.filter(c => c.name !== req.body.name)
+    fs.writeFileSync(FILE, JSON.stringify(data, null, 2))
+    res.json({ ok: true })
+})
 
   let html = `
   <html>

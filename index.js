@@ -140,20 +140,12 @@ app.post("/deleteStream", async (req, res) => {
 app.post("/add", async (req, res) => {
   if (req.query.key !== API_KEY) return res.send("No autorizado");
 
-  let { name, url, category, sections } = req.body;
-
-  // 🔥 IMPORTANTE: asegurar que sea array
-  if (!sections) {
-    sections = ["main", "all"];
-  } else if (!Array.isArray(sections)) {
-    sections = [sections];
-  }
+  const { name, url, category } = req.body;
 
   await collection.insertOne({
     name,
     url,
     category: category || "Otros",
-    sections,
     status: "unknown"
   });
 
@@ -230,34 +222,6 @@ app.post('/delete', (req, res) => {
         document.getElementById("btnRefresh").innerText =
           autoRefresh ? "⏸ Pausar" : "▶ Reanudar";
       }
-          
-      function obtenerSecciones() {
-        const checks = document.querySelectorAll("input[type=checkbox]:checked");
-        return Array.from(checks).map(c => c.value);
-      }
-
-      // 🔥 SOLO AGREGO ESTA FUNCIÓN dentro de <script>
-function filtrarSeccion(seccion) {
-  const filas = document.querySelectorAll(".fila");
-
-  filas.forEach(f => {
-    let sections = f.getAttribute("data-sections");
-
-    try {
-      sections = JSON.parse(sections);
-    } catch {
-      sections = [];
-    }
-
-    if (seccion === "todos") {
-      f.style.display = "";
-    } else if (sections.includes(seccion)) {
-      f.style.display = "";
-    } else {
-      f.style.display = "none";
-    }
-  });
-}
 
       setInterval(() => {
         if (autoRefresh) location.reload();
@@ -324,13 +288,6 @@ function filtrarSeccion(seccion) {
 
   <h2>Panel IPTV</h2>
 
-  <div style="margin-bottom:20px;">
-  <button onclick="filtrarSeccion('main')">📺 MainActivity</button>
-  <button onclick="filtrarSeccion('all')">📋 Todas</button>
-  <button onclick="filtrarSeccion('categoria')">🗂 Categorías</button>
-  <button onclick="filtrarSeccion('todos')">🌐 Ver todo</button>
-</div>
-
   <button id="btnRefresh" onclick="toggleRefresh()">⏸ Pausar</button>
   <button onclick="filtrarOffline()">🔴 Solo caídos</button>
   <button onclick="mostrarTodos()">🟢 Mostrar todos</button>
@@ -343,25 +300,14 @@ function filtrarSeccion(seccion) {
   <hr/>
 
   <h3>➕ Agregar canal rápido</h3>
-
   <form method="POST" action="/add?key=${API_KEY}">
-  <input name="name" placeholder="Nombre">
-  <input name="url" placeholder="URL">
-  <input name="category" placeholder="Categoría">
+    <input name="name" placeholder="Nombre">
+    <input name="url" placeholder="URL">
+    <input name="category" placeholder="Categoría">
+    <button>Agregar</button>
+  </form>
 
-  <br><br>
-
-  <!-- 🔥 IMPORTANTE: name="sections" -->
-  <label><input type="checkbox" name="sections" value="main" checked> Main</label>
-  <label><input type="checkbox" name="sections" value="all" checked> Todos</label>
-  <label><input type="checkbox" name="sections" value="categoria"> Categoría</label>
-
-  <br><br>
-
-  <button>Agregar</button>
-</form>
-
-<hr/>
+  <hr/>
 
   `;
 
@@ -372,7 +318,7 @@ function filtrarSeccion(seccion) {
     grouped[cat].forEach(s => {
 
       html += `
-      <tr class="fila" data-name="${s.name}" data-status="${s.status}" data-sections='${JSON.stringify(s.sections || [])}'>
+      <tr class="fila" data-name="${s.name}" data-status="${s.status}">
         <td>${s.status === "online" ? "🟢" : "🔴"}</td>
         <td>${s.name}</td>
         <td>

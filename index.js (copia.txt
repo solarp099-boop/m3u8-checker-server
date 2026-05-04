@@ -1,4 +1,6 @@
 const express = require("express");
+const fs = require("fs")
+const FILE = "./channels.json"
 const axios = require("axios");
 const cors = require("cors");
 const { MongoClient, ObjectId } = require("mongodb");
@@ -32,42 +34,59 @@ async function conectarDB() {
 let checking = false;
 
 async function checkStreams() {
+
   if (checking || !collection) return;
+
   checking = true;
+
   console.log("Revisando streams...");
 
   try {
     const streams = await collection.find().toArray();
+
     await Promise.all(
       streams.map(async (stream) => {
+
         let status = "offline";
+
         try {
           await axios.head(stream.url, {
             timeout: 5000,
             headers: { "User-Agent": "Mozilla/5.0" }
           });
+
           status = "online";
+
         } catch {
+
           try {
             const res = await axios.get(stream.url, {
               timeout: 8000,
               headers: { "User-Agent": "Mozilla/5.0" },
               validateStatus: () => true
             });
-            if (res.status === 200) status = "online";
+
+            if (res.status === 200) {
+              status = "online";
+            }
+
           } catch {
             status = "offline";
           }
         }
+
         await collection.updateOne(
           { _id: stream._id },
           { $set: { status } }
         );
+
       })
     );
+
   } catch (e) {
     console.error("Error en checker:", e);
   }
+
   console.log("Revisión terminada");
   checking = false;
 }
@@ -75,89 +94,166 @@ async function checkStreams() {
 // 🚀 iniciar
 (async () => {
   await conectarDB();
-  setInterval(checkStreams, 60000); // Aumentado a 1 min para evitar bloqueos
+  setInterval(checkStreams, 15000);
 })();
 
 // 🔐 seguridad
 function verificarClave(req, res, next) {
-  if (req.query.key !== API_KEY) return res.status(401).send("No autorizado");
+  if (req.query.key !== API_KEY) return res.send("No autorizado");
   next();
 }
 
-// 🌐 API PARA LA APP ANDROID
+// 🌐 API
 app.get("/streams", verificarClave, async (req, res) => {
-  try {
-    const streams = await collection.find().toArray();
-    res.json(streams);
-  } catch (e) {
-    res.status(500).json([]);
-  }
+  const streams = await collection.find().toArray();
+  res.json(streams);
 });
 
-// 🔥 ACTUALIZAR URL
+// 🔥 NUEVA RUTA PARA ACTUALIZAR URL
 app.post("/update", async (req, res) => {
   if (req.query.key !== API_KEY) return res.send("No autorizado");
+
   const { id, url } = req.body;
+
   await collection.updateOne(
     { _id: new ObjectId(id) },
     { $set: { url: url } }
   );
+
   res.json({ ok: true });
 });
 
-// ❌ ELIMINAR CANAL
+// ❌ ELIMINAR CANAL (MONGODB)
 app.post("/deleteStream", async (req, res) => {
   if (req.query.key !== API_KEY) return res.send("No autorizado");
+
   const { id } = req.body;
-  await collection.deleteOne({ _id: new ObjectId(id) });
+
+  await collection.deleteOne({
+    _id: new ObjectId(id)
+  });
+
   res.json({ ok: true });
 });
 
-// ➕ AGREGAR CANAL
+// ➕ agregar
 app.post("/add", async (req, res) => {
   if (req.query.key !== API_KEY) return res.send("No autorizado");
+
   const { name, url, category } = req.body;
+
   await collection.insertOne({
     name,
     url,
     category: category || "Otros",
-    status: "unknown",
-    logo: "logo_default.png" // Campo base para la app
+    status: "unknown"
   });
+
   res.redirect(`/admin?key=${API_KEY}`);
 });
 
-// 🔥 PANEL ADMIN
+// 🔥 PANEL ADMIN MEJORADO
 app.get("/admin", async (req, res) => {
+
   if (req.query.key !== API_KEY) return res.send("No autorizado");
+
   const streams = await collection.find().toArray();
+
   const grouped = {};
   streams.forEach(s => {
     if (!grouped[s.category]) grouped[s.category] = [];
     grouped[s.category].push(s);
   });
 
+  // 🔥 OBTENER CANALES
+app.get('/channels', (req, res) => {
+    const data = JSON.parse(fs.readFileSync(FILE))
+    res.json(data)
+})
+
+// 🔥 AGREGAR CANAL
+app.post('/add', (req, res) => {
+  const data = JSON.parse(fs.readFileSync(FILE, "utf8"))
+
+  data.push(req.body)
+
+  fs.writeFileSync(FILE, JSON.stringify(data, null, 2))
+
+  res.json({ ok: true })
+})
+
+// 🔥 ELIMINAR CANAL
+app.post('/delete', (req, res) => {
+  let data = JSON.parse(fs.readFileSync(FILE, "utf8"))
+
+  data = data.filter(c => c.name !== req.body.name)
+
+  fs.writeFileSync(FILE, JSON.stringify(data, null, 2))
+
+  res.json({ ok: true })
+})
+
+// 🔥 AGREGAR CANAL
+app.post('/add', (req, res) => {
+    const data = JSON.parse(fs.readFileSync(FILE))
+    data.push(req.body)
+    fs.writeFileSync(FILE, JSON.stringify(data, null, 2))
+    res.json({ ok: true })
+})
+
+// 🔥 ELIMINAR CANAL
+app.post('/delete', (req, res) => {
+    let data = JSON.parse(fs.readFileSync(FILE))
+    data = data.filter(c => c.name !== req.body.name)
+    fs.writeFileSync(FILE, JSON.stringify(data, null, 2))
+    res.json({ ok: true })
+})
+
   let html = `
   <html>
   <head>
     <title>Panel IPTV</title>
+
     <script>
       let autoRefresh = true;
+
       function toggleRefresh() {
         autoRefresh = !autoRefresh;
-        document.getElementById("btnRefresh").innerText = autoRefresh ? "⏸ Pausar" : "▶ Reanudar";
+        document.getElementById("btnRefresh").innerText =
+          autoRefresh ? "⏸ Pausar" : "▶ Reanudar";
       }
-      setInterval(() => { if (autoRefresh) location.reload(); }, 30000);
+
+      setInterval(() => {
+        if (autoRefresh) location.reload();
+      }, 10000);
 
       function buscar() {
         let input = document.getElementById("buscador").value.toLowerCase();
-        document.querySelectorAll(".fila").forEach(f => {
-          f.style.display = f.getAttribute("data-name").toLowerCase().includes(input) ? "" : "none";
+        let filas = document.querySelectorAll(".fila");
+
+        filas.forEach(f => {
+          let nombre = f.getAttribute("data-name").toLowerCase();
+          f.style.display = nombre.includes(input) ? "" : "none";
         });
+      }
+      
+
+      function filtrarOffline() {
+        let filas = document.querySelectorAll(".fila");
+
+        filas.forEach(f => {
+          let estado = f.getAttribute("data-status");
+          f.style.display = estado === "offline" ? "" : "none";
+        });
+      }
+
+      function mostrarTodos() {
+        document.querySelectorAll(".fila").forEach(f => f.style.display = "");
       }
 
       async function eliminar(id) {
         if (!confirm("Eliminar canal?")) return;
+
         await fetch("/deleteStream?key=${API_KEY}", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -168,58 +264,81 @@ app.get("/admin", async (req, res) => {
 
       async function guardar(id) {
         const url = document.getElementById("url-" + id).value;
+
         await fetch("/update?key=${API_KEY}", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ id: id, url: url })
         });
+
         alert("Guardado");
       }
     </script>
+
     <style>
-      body { font-family: Arial; background:#111; color:white; padding: 20px; }
-      table { width:100%; border-collapse: collapse; margin-bottom: 20px; }
-      td, th { padding:10px; border-bottom:1px solid #333; text-align: left; }
-      input { width:100%; padding:5px; background: #222; color: white; border: 1px solid #444; }
-      button { padding:6px 10px; cursor:pointer; margin:2px; background: #444; color: white; border: none; }
-      .online { color: #0f0; } .offline { color: #f00; }
+      body { font-family: Arial; background:#111; color:white; }
+      table { width:100%; border-collapse: collapse; }
+      td, th { padding:10px; border-bottom:1px solid #333; }
+      input { width:100%; padding:5px; }
+      button { padding:6px 10px; cursor:pointer; margin:2px; }
     </style>
   </head>
+
   <body>
-    <h2>Panel IPTV Dinámico</h2>
-    <button id="btnRefresh" onclick="toggleRefresh()">⏸ Pausar</button>
-    <input id="buscador" onkeyup="buscar()" placeholder="🔍 Buscar canal..." style="margin: 10px 0; width: 300px;">
-    
-    <hr/>
-    <h3>➕ Agregar nuevo canal</h3>
-    <form method="POST" action="/add?key=${API_KEY}">
-      <input name="name" placeholder="Nombre" required style="width: 200px;">
-      <input name="url" placeholder="URL m3u8" required style="width: 300px;">
-      <input name="category" placeholder="Categoría (Ej: Deportes)" required style="width: 150px;">
-      <button style="background: #28a745;">Agregar</button>
-    </form>
-    <hr/>
+
+  <h2>Panel IPTV</h2>
+
+  <button id="btnRefresh" onclick="toggleRefresh()">⏸ Pausar</button>
+  <button onclick="filtrarOffline()">🔴 Solo caídos</button>
+  <button onclick="mostrarTodos()">🟢 Mostrar todos</button>
+
+  <br/><br/>
+
+  🔍 Buscar:
+  <input id="buscador" onkeyup="buscar()" placeholder="Nombre canal">
+
+  <hr/>
+
+  <h3>➕ Agregar canal rápido</h3>
+  <form method="POST" action="/add?key=${API_KEY}">
+    <input name="name" placeholder="Nombre">
+    <input name="url" placeholder="URL">
+    <input name="category" placeholder="Categoría">
+    <button>Agregar</button>
+  </form>
+
+  <hr/>
+
   `;
 
   for (let cat in grouped) {
+
     html += `<h3>📂 ${cat}</h3><table>`;
+
     grouped[cat].forEach(s => {
+
       html += `
       <tr class="fila" data-name="${s.name}" data-status="${s.status}">
-        <td style="width: 30px;">${s.status === "online" ? "<span class='online'>●</span>" : "<span class='offline'>●</span>"}</td>
-        <td style="width: 200px;"><b>${s.name}</b></td>
-        <td><input id="url-${s._id}" value="${s.url}" /></td>
-        <td style="width: 150px;">
-          <button onclick="guardar('${s._id}')">💾</button>
-          <button onclick="eliminar('${s._id}')" style="background: #dc3545;">❌</button>
+        <td>${s.status === "online" ? "🟢" : "🔴"}</td>
+        <td>${s.name}</td>
+        <td>
+          <input id="url-${s._id}" value="${s.url}" />
         </td>
-      </tr>`;
+        <td>
+          <button onclick="guardar('${s._id}')">Guardar</button>
+          <button onclick="eliminar('${s._id}')">❌</button>
+        </td>
+      </tr>
+      `;
     });
+
     html += "</table>";
   }
+
   html += "</body></html>";
+
   res.send(html);
 });
-
+// 🚀 puerto
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log("🚀 Servidor IPTV Dinámico listo en puerto " + PORT));
+app.listen(PORT, () => console.log("Servidor listo"));

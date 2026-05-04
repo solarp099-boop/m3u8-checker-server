@@ -160,6 +160,28 @@ app.get('/channels', (req, res) => {
 
 // 🔥 AGREGAR CANAL
 app.post('/add', (req, res) => {
+  const data = JSON.parse(fs.readFileSync(FILE, "utf8"))
+
+  data.push(req.body)
+
+  fs.writeFileSync(FILE, JSON.stringify(data, null, 2))
+
+  res.json({ ok: true })
+})
+
+// 🔥 ELIMINAR CANAL
+app.post('/delete', (req, res) => {
+  let data = JSON.parse(fs.readFileSync(FILE, "utf8"))
+
+  data = data.filter(c => c.name !== req.body.name)
+
+  fs.writeFileSync(FILE, JSON.stringify(data, null, 2))
+
+  res.json({ ok: true })
+})
+
+// 🔥 AGREGAR CANAL
+app.post('/add', (req, res) => {
     const data = JSON.parse(fs.readFileSync(FILE))
     data.push(req.body)
     fs.writeFileSync(FILE, JSON.stringify(data, null, 2))

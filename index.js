@@ -140,13 +140,20 @@ app.post("/deleteStream", async (req, res) => {
 app.post("/add", async (req, res) => {
   if (req.query.key !== API_KEY) return res.send("No autorizado");
 
-  const { name, url, category, sections } = req.body;
+  let { name, url, category, sections } = req.body;
+
+  // 🔥 IMPORTANTE: asegurar que sea array
+  if (!sections) {
+    sections = ["main", "all"];
+  } else if (!Array.isArray(sections)) {
+    sections = [sections];
+  }
 
   await collection.insertOne({
     name,
     url,
     category: category || "Otros",
-    sections: sections || ["main", "all"],
+    sections,
     status: "unknown"
   });
 

@@ -138,11 +138,45 @@ app.get("/admin", async (req, res) => {
     const categoriasFijas = ["Cine", "Radio", "Infantiles", "Entretenimiento", "Deportes", "Nacionales"];
     const todasLasCategorias = [...new Set([...categoriasFijas, ...streams.map(s => s.category)])];
 
+    // Función de renderizado para el servidor
+    const renderRowServer = (s) => `
+    <tr id="main-row-${s._id}">
+      <td width="30">${s.status === 'online' ? '🟢' : '🔴'}</td>
+      <td width="220">
+        <button class="btn-top-add" onclick="showInsert('${s._id}')">➕ Agregar encima de ${s.name}</button>
+        <div id="insert-${s._id}" class="insert-box">
+           <form method="POST" action="/addSpecific?key=${API_KEY}">
+             <input name="name" placeholder="Nombre" style="width:90%; margin-bottom:5px;" required>
+             <input name="url" placeholder="URL" style="width:90%; margin-bottom:5px;" required>
+             <input type="hidden" name="category" value="${s.category}">
+             <input type="hidden" name="targetId" value="${s._id}">
+             <button class="btn-plus">Añadir aquí</button>
+           </form>
+        </div>
+        <b>${s.name}</b><br/>
+        <span class="cat-badge">${s.category}</span><br/>
+        <button class="btn-plus" style="margin-top:5px" onclick="showInsert('${s._id}_below')">+</button>
+        <div id="insert-${s._id}_below" class="insert-box">
+           <form method="POST" action="/addSpecific?key=${API_KEY}">
+             <input name="name" placeholder="Nombre" style="width:90%;" required>
+             <input name="url" placeholder="URL" style="width:90%;" required>
+             <input type="hidden" name="category" value="${s.category}">
+             <button class="btn-plus">Añadir al final</button>
+           </form>
+        </div>
+      </td>
+      <td><input class="input-url" id="url-${s._id}" value="${s.url}"></td>
+      <td width="100">
+        <button class="btn-play" onclick="guardar('${s._id}')">💾</button>
+        <button class="btn-play" style="background:var(--danger)" onclick="eliminar('${s._id}')">❌</button>
+      </td>
+    </tr>`;
+
     let html = `
     <!DOCTYPE html>
     <html>
     <head>
-      <title>IPTV Manager - Control Total</title>
+      <title>IPTV Manager</title>
       <style>
         :root { --bg: #0f0f0f; --card: #1a1a1a; --primary: #3d5afe; --danger: #ff1744; --success: #28a745; --text: #ffffff; }
         body { font-family: 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); margin: 0; padding: 20px; }
@@ -193,7 +227,7 @@ app.get("/admin", async (req, res) => {
 
       <div id="view-all" class="view-container active">
         <button class="btn-danger-all" onclick="borrarMasivo('all')">🗑 Borrar TODO</button>
-        <table>${streams.map(s => renderRow(s)).join('')}</table>
+        <table>${streams.map(s => renderRowServer(s)).join('')}</table>
       </div>
 
       <div id="view-categories" class="view-container">
@@ -208,7 +242,7 @@ app.get("/admin", async (req, res) => {
 
       <div id="view-main" class="view-container">
          <button class="btn-danger-all" onclick="borrarMasivo('main')">🗑 Limpiar Nacionales</button>
-         <table>${streams.filter(s => s.category === "Nacionales").map(s => renderRow(s)).join('')}</table>
+         <table>${streams.filter(s => s.category === "Nacionales").map(s => renderRowServer(s)).join('')}</table>
       </div>
 
       <script>
@@ -227,21 +261,25 @@ app.get("/admin", async (req, res) => {
           if(view === 'main') document.getElementById('bulkCatInput').value = 'Nacionales';
         }
 
-        function showInsert(id) {
+        // FUNCIÓN GLOBAL
+        window.showInsert = function(id) {
           const box = document.getElementById('insert-' + id);
           if(!box) return;
           const isVisible = box.style.display === 'block';
+          // Cerramos otros por comodidad
           document.querySelectorAll('.insert-box').forEach(b => b.style.display = 'none');
           box.style.display = isVisible ? 'none' : 'block';
-        }
+        };
 
         function filterCat(cat) {
           document.getElementById('cat-actions').style.display = 'block';
           document.getElementById('btnDelCat').onclick = () => borrarMasivo('category', cat);
           document.getElementById('bulkCatInput').value = cat;
           const filtered = allStreams.filter(s => s.category === cat);
-          document.getElementById('cat-table-body').innerHTML = filtered.map(s => {
-              return \`<tr>
+          
+          let html = "";
+          filtered.forEach(s => {
+            html += \`<tr>
                 <td width="30">\${s.status === 'online' ? '🟢' : '🔴'}</td>
                 <td width="220">
                   <button class="btn-top-add" onclick="showInsert('\${s._id}')">➕ Agregar encima de \${s.name}</button>
@@ -272,7 +310,8 @@ app.get("/admin", async (req, res) => {
                   <button class="btn-play" style="background:var(--danger)" onclick="eliminar('\${s._id}')">❌</button>
                 </td>
               </tr>\`;
-          }).join('');
+          });
+          document.getElementById('cat-table-body').innerHTML = html;
         }
 
         async function guardar(id) {
@@ -315,40 +354,5 @@ app.get("/admin", async (req, res) => {
   }
 });
 
-function renderRow(s) {
-  return `
-    <tr>
-      <td width="30">${s.status === 'online' ? '🟢' : '🔴'}</td>
-      <td width="220">
-        <button class="btn-top-add" onclick="showInsert('${s._id}')">➕ Agregar encima de ${s.name}</button>
-        <div id="insert-${s._id}" class="insert-box">
-           <form method="POST" action="/addSpecific?key=${API_KEY}">
-             <input name="name" placeholder="Nombre" style="width:90%; margin-bottom:5px;" required>
-             <input name="url" placeholder="URL" style="width:90%; margin-bottom:5px;" required>
-             <input type="hidden" name="category" value="${s.category}">
-             <input type="hidden" name="targetId" value="${s._id}">
-             <button class="btn-plus">Añadir aquí</button>
-           </form>
-        </div>
-        <b>${s.name}</b><br/>
-        <span class="cat-badge">${s.category}</span><br/>
-        <button class="btn-plus" style="margin-top:5px" onclick="showInsert('${s._id}_below')">+</button>
-        <div id="insert-${s._id}_below" class="insert-box">
-           <form method="POST" action="/addSpecific?key=${API_KEY}">
-             <input name="name" placeholder="Nombre" style="width:90%;" required>
-             <input name="url" placeholder="URL" style="width:90%;" required>
-             <input type="hidden" name="category" value="${s.category}">
-             <button class="btn-plus">Añadir al final</button>
-           </form>
-        </div>
-      </td>
-      <td><input class="input-url" id="url-${s._id}" value="${s.url}"></td>
-      <td width="100">
-        <button class="btn-play" onclick="guardar('${s._id}')">💾</button>
-        <button class="btn-play" style="background:var(--danger)" onclick="eliminar('${s._id}')">❌</button>
-      </td>
-    </tr>`;
-}
-
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log("🚀 Servidor con Inserción Específica Corregido"));
+app.listen(PORT, () => console.log("🚀 Servidor IPTV OK"));

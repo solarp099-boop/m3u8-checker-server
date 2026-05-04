@@ -51,7 +51,8 @@ async function checkStreams() {
   setInterval(checkStreams, 60000);
 })();
 
-// API para App (Ordenado alfabéticamente por nombre)
+// --- APIS DE CONTROL ---
+
 app.get("/streams", async (req, res) => {
   if (req.query.key !== API_KEY) return res.status(401).json([]);
   const streams = await collection.find().sort({ name: 1 }).toArray(); 
@@ -72,20 +73,48 @@ app.post("/deleteStream", async (req, res) => {
   res.json({ ok: true });
 });
 
+app.post("/deleteAll", async (req, res) => {
+  if (req.query.key !== API_KEY) return res.status(401).send("No autorizado");
+  const { filterType, filterValue } = req.body;
+  let query = {};
+  if (filterType === "category") query = { category: filterValue };
+  if (filterType === "main") query = { category: { $regex: /nacionales/i } };
+  await collection.deleteMany(query);
+  res.json({ ok: true });
+});
+
 app.post("/add", async (req, res) => {
   if (req.query.key !== API_KEY) return res.status(401).send("No autorizado");
   const { name, url, category } = req.body;
-  await collection.insertOne({
-    name, url, category: category || "Otros", status: "unknown"
-  });
+  await collection.insertOne({ name, url, category: category || "Otros", status: "unknown" });
   res.redirect(`/admin?key=${API_KEY}`);
 });
 
-// 🔥 PANEL ADMIN CON ORDEN ORIGINAL Y "+" EN TODO
+app.post("/addBulk", async (req, res) => {
+  if (req.query.key !== API_KEY) return res.status(401).send("No autorizado");
+  const { list, category } = req.body;
+  const lines = list.split("\n");
+  const toInsert = [];
+  lines.forEach((line, index) => {
+    const parts = line.split(",");
+    if (parts.length >= 2) {
+      toInsert.push({
+        name: parts[0].trim(),
+        url: parts[1].trim(),
+        category: category || "Otros",
+        status: "unknown",
+        createdAt: new Date(Date.now() + index)
+      });
+    }
+  });
+  if (toInsert.length > 0) await collection.insertMany(toInsert);
+  res.redirect(`/admin?key=${API_KEY}`);
+});
+
+// --- PANEL ADMINISTRATIVO ---
+
 app.get("/admin", async (req, res) => {
   if (req.query.key !== API_KEY) return res.send("No autorizado");
-  
-  // Ordenamos por nombre (1) para recuperar el orden que tenías antes
   const streams = await collection.find().sort({ name: 1 }).toArray();
   const categoriasUnicas = [...new Set(streams.map(s => s.category))];
 
@@ -93,7 +122,7 @@ app.get("/admin", async (req, res) => {
   <!DOCTYPE html>
   <html>
   <head>
-    <title>IPTV Manager Pro</title>
+    <title>IPTV Manager Pro Ultra</title>
     <style>
       :root { --bg: #0f0f0f; --card: #1a1a1a; --primary: #3d5afe; --danger: #ff1744; --success: #28a745; --text: #ffffff; }
       body { font-family: 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); margin: 0; padding: 20px; }
@@ -103,8 +132,9 @@ app.get("/admin", async (req, res) => {
       .nav-btn.active { background: var(--primary); }
       .view-container { display: none; background: var(--card); padding: 20px; border-radius: 12px; }
       .view-container.active { display: block; }
-      .form-inline { background: #222; padding: 15px; border-radius: 8px; margin-bottom: 20px; display: flex; gap: 10px; }
-      .form-inline input { background: #000; border: 1px solid #444; color: white; padding: 8px; border-radius: 4px; flex: 1; }
+      .bulk-section { background: #222; padding: 15px; border-radius: 8px; margin-bottom: 20px; border-left: 4px solid var(--primary); }
+      textarea { width: 100%; background: #000; color: #0f0; border: 1px solid #444; padding: 10px; font-family: monospace; border-radius: 4px; resize: vertical; }
+      .btn-danger-all { background: var(--danger); color: white; border: none; padding: 8px 15px; border-radius: 5px; cursor: pointer; font-weight: bold; margin-bottom: 15px; }
       table { width: 100%; border-collapse: collapse; }
       td { padding: 12px; border-bottom: 1px solid #2a2a2a; vertical-align: top; }
       .btn-play { background: #444; border: none; color: white; padding: 8px 15px; border-radius: 5px; cursor: pointer; }
@@ -128,35 +158,35 @@ app.get("/admin", async (req, res) => {
       </div>
     </div>
 
-    <div class="form-inline">
-      <form method="POST" action="/add?key=${API_KEY}" style="display:flex; gap:10px; width:100%;">
-        <input name="name" placeholder="Nombre" required>
-        <input name="url" placeholder="URL m3u8" required>
-        <input name="category" placeholder="Categoría" required>
-        <button class="btn-play" style="background:var(--success)">Agregar Nuevo</button>
+    <div class="bulk-section">
+      <h4 style="margin:0 0 10px 0;">➕ Carga Masiva (Formato: Nombre, URL)</h4>
+      <form method="POST" action="/addBulk?key=${API_KEY}">
+        <textarea name="list" rows="2" placeholder="Willax, http://...&#10;Latina, http://..."></textarea>
+        <div style="margin-top:10px; display:flex; gap:10px;">
+          <input name="category" id="bulkCatInput" placeholder="Categoría para este grupo" style="background:#000; color:white; border:1px solid #444; padding:8px; flex:1; border-radius:4px;">
+          <button class="nav-btn" style="background:var(--success)">Agregar Lista</button>
+        </div>
       </form>
     </div>
 
-    <!-- TODAS LAS SEÑALES -->
     <div id="view-all" class="view-container active">
-      <table>
-        ${streams.map(s => renderRow(s)).join('')}
-      </table>
+      <button class="btn-danger-all" onclick="borrarMasivo('all')">🗑 Borrar TODO el Servidor</button>
+      <table>${streams.map(s => renderRow(s)).join('')}</table>
     </div>
 
-    <!-- POR CATEGORÍA -->
     <div id="view-categories" class="view-container">
        <div style="margin-bottom:15px; display:flex; gap:5px; flex-wrap:wrap;">
          ${categoriasUnicas.map(cat => `<button class="nav-btn" style="font-size:11px; padding:6px 12px;" onclick="filterCat('${cat}')">${cat}</button>`).join('')}
        </div>
-       <table id="cat-table-body"></table>
+       <div id="cat-actions" style="display:none">
+          <button class="btn-danger-all" id="btnDelCat" onclick="">🗑 Borrar Categoría</button>
+          <table id="cat-table-body"></table>
+       </div>
     </div>
 
-    <!-- PANTALLA PRINCIPAL -->
     <div id="view-main" class="view-container">
-       <table>
-         ${streams.filter(s => s.category.toLowerCase() === "nacionales").map(s => renderRow(s)).join('')}
-       </table>
+       <button class="btn-danger-all" onclick="borrarMasivo('main')">🗑 Limpiar Pantalla Principal</button>
+       <table>${streams.filter(s => s.category.toLowerCase() === "nacionales").map(s => renderRow(s)).join('')}</table>
     </div>
 
     <script>
@@ -172,6 +202,7 @@ app.get("/admin", async (req, res) => {
         document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
         document.getElementById('view-' + view).classList.add('active');
         btn.classList.add('active');
+        if(view === 'main') document.getElementById('bulkCatInput').value = 'Nacionales';
       }
 
       function showInsert(id) {
@@ -181,33 +212,25 @@ app.get("/admin", async (req, res) => {
         box.style.display = isVisible ? 'none' : 'block';
       }
 
+      async function borrarMasivo(type, value = '') {
+        if (!confirm("¿Estás seguro? Esta acción no se puede deshacer.")) return;
+        await fetch("/deleteAll?key=${API_KEY}", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ filterType: type, filterValue: value })
+        });
+        location.reload();
+      }
+
       function filterCat(cat) {
+        document.getElementById('cat-actions').style.display = 'block';
+        document.getElementById('btnDelCat').onclick = () => borrarMasivo('category', cat);
+        document.getElementById('btnDelCat').innerText = '🗑 Borrar Categoría: ' + cat;
+        document.getElementById('bulkCatInput').value = cat;
+
         const data = ${JSON.stringify(streams)};
         const filtered = data.filter(s => s.category === cat);
-        // Aquí regeneramos las filas con el botón "+" incluido
-        document.getElementById('cat-table-body').innerHTML = filtered.map(s => \`
-          <tr>
-            <td width="30">\${s.status === 'online' ? '🟢' : '🔴'}</td>
-            <td width="220">
-              <b>\${s.name}</b><br/>
-              <span class="cat-badge">\${s.category}</span><br/>
-              <button class="btn-plus" onclick="showInsert('\${s._id}')">+</button>
-              <div id="insert-\${s._id}" class="insert-box">
-                 <form method="POST" action="/add?key=${API_KEY}">
-                   <input name="name" placeholder="Nombre" style="width:70px; font-size:10px;" required>
-                   <input name="url" placeholder="URL" style="width:100px; font-size:10px;" required>
-                   <input type="hidden" name="category" value="\${s.category}">
-                   <button style="font-size:10px;">Añadir</button>
-                 </form>
-              </div>
-            </td>
-            <td><input class="input-url" id="url-\${s._id}" value="\${s.url}"></td>
-            <td width="100">
-              <button class="btn-play" onclick="guardar('\${s._id}')">💾</button>
-              <button class="btn-play" style="background:var(--danger)" onclick="eliminar('\${s._id}')">❌</button>
-            </td>
-          </tr>
-        \`).join('');
+        document.getElementById('cat-table-body').innerHTML = filtered.map(s => renderRow(s)).join('');
       }
 
       async function guardar(id) {
@@ -221,7 +244,7 @@ app.get("/admin", async (req, res) => {
       }
 
       async function eliminar(id) {
-        if(!confirm("¿Eliminar canal?")) return;
+        if(!confirm("¿Eliminar este canal?")) return;
         await fetch("/deleteStream?key=${API_KEY}", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -237,6 +260,7 @@ app.get("/admin", async (req, res) => {
 });
 
 function renderRow(s) {
+  const API_KEY = process.env.API_KEY || "123456";
   return `
     <tr>
       <td width="30">${s.status === 'online' ? '🟢' : '🔴'}</td>
@@ -262,4 +286,4 @@ function renderRow(s) {
 }
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log("🚀 Panel Restaurado y Mejorado"));
+app.listen(PORT, () => console.log("🚀 Panel Completo Restaurado"));

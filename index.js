@@ -140,12 +140,13 @@ app.post("/deleteStream", async (req, res) => {
 app.post("/add", async (req, res) => {
   if (req.query.key !== API_KEY) return res.send("No autorizado");
 
-  const { name, url, category } = req.body;
+  const { name, url, category, sections } = req.body;
 
   await collection.insertOne({
     name,
     url,
     category: category || "Otros",
+    sections: sections || ["main", "all"],
     status: "unknown"
   });
 
@@ -300,14 +301,25 @@ app.post('/delete', (req, res) => {
   <hr/>
 
   <h3>➕ Agregar canal rápido</h3>
-  <form method="POST" action="/add?key=${API_KEY}">
-    <input name="name" placeholder="Nombre">
-    <input name="url" placeholder="URL">
-    <input name="category" placeholder="Categoría">
-    <button>Agregar</button>
-  </form>
 
-  <hr/>
+  <form method="POST" action="/add?key=${API_KEY}">
+  <input name="name" placeholder="Nombre">
+  <input name="url" placeholder="URL">
+  <input name="category" placeholder="Categoría">
+
+  <br><br>
+
+  <!-- 🔥 IMPORTANTE: name="sections" -->
+  <label><input type="checkbox" name="sections" value="main" checked> Main</label>
+  <label><input type="checkbox" name="sections" value="all" checked> Todos</label>
+  <label><input type="checkbox" name="sections" value="categoria"> Categoría</label>
+
+  <br><br>
+
+  <button>Agregar</button>
+</form>
+
+<hr/>
 
   `;
 

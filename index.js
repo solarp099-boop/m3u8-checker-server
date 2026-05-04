@@ -22,7 +22,7 @@ async function conectarDB() {
   } catch (e) { console.error("❌ Error MongoDB:", e); }
 }
 
-// 🔍 Checker constante en segundo plano
+// 🔍 Checker de estado constante
 let checking = false;
 async function checkStreams() {
   if (checking || !collection) return;
@@ -48,17 +48,16 @@ async function checkStreams() {
 
 (async () => {
   await conectarDB();
-  setInterval(checkStreams, 60000); // Revisa cada 60 segundos
+  setInterval(checkStreams, 60000);
 })();
 
-// 🌐 API para App
+// API para App (Ordenado alfabéticamente por nombre)
 app.get("/streams", async (req, res) => {
   if (req.query.key !== API_KEY) return res.status(401).json([]);
-  const streams = await collection.find().sort({ order: 1 }).toArray(); // Ordenado
+  const streams = await collection.find().sort({ name: 1 }).toArray(); 
   res.json(streams);
 });
 
-// 🔥 Actualizar
 app.post("/update", async (req, res) => {
   if (req.query.key !== API_KEY) return res.status(401).send("No autorizado");
   const { id, url } = req.body;
@@ -66,7 +65,6 @@ app.post("/update", async (req, res) => {
   res.json({ ok: true });
 });
 
-// ❌ Eliminar
 app.post("/deleteStream", async (req, res) => {
   if (req.query.key !== API_KEY) return res.status(401).send("No autorizado");
   const { id } = req.body;
@@ -74,26 +72,21 @@ app.post("/deleteStream", async (req, res) => {
   res.json({ ok: true });
 });
 
-// ➕ Agregar (General o en posición específica)
 app.post("/add", async (req, res) => {
   if (req.query.key !== API_KEY) return res.status(401).send("No autorizado");
-  const { name, url, category, afterOrder } = req.body;
-  
-  let newOrder = Date.now(); // Por defecto al final
-  if (afterOrder) {
-    newOrder = parseFloat(afterOrder) + 1; // Se inserta justo después
-  }
-
+  const { name, url, category } = req.body;
   await collection.insertOne({
-    name, url, category: category || "Otros", status: "unknown", order: newOrder
+    name, url, category: category || "Otros", status: "unknown"
   });
   res.redirect(`/admin?key=${API_KEY}`);
 });
 
-// 🔥 PANEL ADMIN MEJORADO
+// 🔥 PANEL ADMIN CON ORDEN ORIGINAL Y "+" EN TODO
 app.get("/admin", async (req, res) => {
   if (req.query.key !== API_KEY) return res.send("No autorizado");
-  const streams = await collection.find().sort({ order: 1 }).toArray();
+  
+  // Ordenamos por nombre (1) para recuperar el orden que tenías antes
+  const streams = await collection.find().sort({ name: 1 }).toArray();
   const categoriasUnicas = [...new Set(streams.map(s => s.category))];
 
   let html = `
@@ -113,12 +106,12 @@ app.get("/admin", async (req, res) => {
       .form-inline { background: #222; padding: 15px; border-radius: 8px; margin-bottom: 20px; display: flex; gap: 10px; }
       .form-inline input { background: #000; border: 1px solid #444; color: white; padding: 8px; border-radius: 4px; flex: 1; }
       table { width: 100%; border-collapse: collapse; }
-      td { padding: 12px; border-bottom: 1px solid #2a2a2a; }
+      td { padding: 12px; border-bottom: 1px solid #2a2a2a; vertical-align: top; }
       .btn-play { background: #444; border: none; color: white; padding: 8px 15px; border-radius: 5px; cursor: pointer; }
       .btn-plus { background: var(--success); color: white; border: none; padding: 4px 8px; border-radius: 4px; cursor: pointer; font-size: 12px; margin-top: 5px; }
-      .insert-box { display: none; background: #222; padding: 10px; border-left: 4px solid var(--success); margin: 5px 0; }
-      .online { color: #0f0; } .offline { color: #f00; }
-      .input-url { width: 100%; background: #0a0a0a; border: 1px solid #333; color: #ccc; padding: 6px; border-radius: 4px; }
+      .insert-box { display: none; background: #222; padding: 10px; border-left: 4px solid var(--success); margin: 10px 0; border-radius: 4px; }
+      .input-url { width: 100%; background: #0a0a0a; border: 1px solid #333; color: #ccc; padding: 8px; border-radius: 4px; }
+      .cat-badge { font-size: 10px; background: #333; padding: 2px 6px; border-radius: 10px; color: #aaa; }
     </style>
   </head>
   <body>
@@ -140,23 +133,26 @@ app.get("/admin", async (req, res) => {
         <input name="name" placeholder="Nombre" required>
         <input name="url" placeholder="URL m3u8" required>
         <input name="category" placeholder="Categoría" required>
-        <button class="btn-play" style="background:var(--success)">Agregar al final</button>
+        <button class="btn-play" style="background:var(--success)">Agregar Nuevo</button>
       </form>
     </div>
 
+    <!-- TODAS LAS SEÑALES -->
     <div id="view-all" class="view-container active">
       <table>
         ${streams.map(s => renderRow(s)).join('')}
       </table>
     </div>
 
+    <!-- POR CATEGORÍA -->
     <div id="view-categories" class="view-container">
-       <div style="margin-bottom:15px;">
-         ${categoriasUnicas.map(cat => `<button class="nav-btn" style="font-size:12px; padding:5px 10px;" onclick="filterCat('${cat}')">${cat}</button>`).join(' ')}
+       <div style="margin-bottom:15px; display:flex; gap:5px; flex-wrap:wrap;">
+         ${categoriasUnicas.map(cat => `<button class="nav-btn" style="font-size:11px; padding:6px 12px;" onclick="filterCat('${cat}')">${cat}</button>`).join('')}
        </div>
        <table id="cat-table-body"></table>
     </div>
 
+    <!-- PANTALLA PRINCIPAL -->
     <div id="view-main" class="view-container">
        <table>
          ${streams.filter(s => s.category.toLowerCase() === "nacionales").map(s => renderRow(s)).join('')}
@@ -169,7 +165,7 @@ app.get("/admin", async (req, res) => {
         autoRefresh = !autoRefresh;
         document.getElementById("btnAutoRefresh").innerText = autoRefresh ? "⏸ Pausar" : "▶ Reanudar";
       }
-      setInterval(() => { if(autoRefresh) location.reload(); }, 15000);
+      setInterval(() => { if(autoRefresh) location.reload(); }, 20000);
 
       function showView(view, btn) {
         document.querySelectorAll('.view-container').forEach(v => v.classList.remove('active'));
@@ -180,17 +176,36 @@ app.get("/admin", async (req, res) => {
 
       function showInsert(id) {
         const box = document.getElementById('insert-' + id);
-        box.style.display = box.style.display === 'block' ? 'none' : 'block';
+        const isVisible = box.style.display === 'block';
+        document.querySelectorAll('.insert-box').forEach(b => b.style.display = 'none');
+        box.style.display = isVisible ? 'none' : 'block';
       }
 
       function filterCat(cat) {
         const data = ${JSON.stringify(streams)};
         const filtered = data.filter(s => s.category === cat);
+        // Aquí regeneramos las filas con el botón "+" incluido
         document.getElementById('cat-table-body').innerHTML = filtered.map(s => \`
           <tr>
             <td width="30">\${s.status === 'online' ? '🟢' : '🔴'}</td>
-            <td width="200"><b>\${s.name}</b></td>
+            <td width="220">
+              <b>\${s.name}</b><br/>
+              <span class="cat-badge">\${s.category}</span><br/>
+              <button class="btn-plus" onclick="showInsert('\${s._id}')">+</button>
+              <div id="insert-\${s._id}" class="insert-box">
+                 <form method="POST" action="/add?key=${API_KEY}">
+                   <input name="name" placeholder="Nombre" style="width:70px; font-size:10px;" required>
+                   <input name="url" placeholder="URL" style="width:100px; font-size:10px;" required>
+                   <input type="hidden" name="category" value="\${s.category}">
+                   <button style="font-size:10px;">Añadir</button>
+                 </form>
+              </div>
+            </td>
             <td><input class="input-url" id="url-\${s._id}" value="\${s.url}"></td>
+            <td width="100">
+              <button class="btn-play" onclick="guardar('\${s._id}')">💾</button>
+              <button class="btn-play" style="background:var(--danger)" onclick="eliminar('\${s._id}')">❌</button>
+            </td>
           </tr>
         \`).join('');
       }
@@ -202,11 +217,11 @@ app.get("/admin", async (req, res) => {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ id: id, url: url })
         });
-        alert("Guardado");
+        alert("Actualizado");
       }
 
       async function eliminar(id) {
-        if(!confirm("¿Eliminar?")) return;
+        if(!confirm("¿Eliminar canal?")) return;
         await fetch("/deleteStream?key=${API_KEY}", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -225,16 +240,16 @@ function renderRow(s) {
   return `
     <tr>
       <td width="30">${s.status === 'online' ? '🟢' : '🔴'}</td>
-      <td width="200">
-        <b>${s.name}</b><br/><small style="color:#666">${s.category}</small><br/>
-        <button class="btn-plus" onclick="showInsert('${s._id}')"> + Agregar debajo</button>
+      <td width="220">
+        <b>${s.name}</b><br/>
+        <span class="cat-badge">${s.category}</span><br/>
+        <button class="btn-plus" onclick="showInsert('${s._id}')">+</button>
         <div id="insert-${s._id}" class="insert-box">
            <form method="POST" action="/add?key=${API_KEY}">
-             <input type="hidden" name="afterOrder" value="${s.order}">
+             <input name="name" placeholder="Nombre" style="width:70px; font-size:10px;" required>
+             <input name="url" placeholder="URL" style="width:100px; font-size:10px;" required>
              <input type="hidden" name="category" value="${s.category}">
-             <input name="name" placeholder="Nombre" style="width:80px; font-size:10px;">
-             <input name="url" placeholder="URL" style="width:120px; font-size:10px;">
-             <button style="font-size:10px;">Insertar</button>
+             <button style="font-size:10px;">Añadir</button>
            </form>
         </div>
       </td>
@@ -247,4 +262,4 @@ function renderRow(s) {
 }
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log("🚀 Servidor con inserción rápida listo"));
+app.listen(PORT, () => console.log("🚀 Panel Restaurado y Mejorado"));

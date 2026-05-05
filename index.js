@@ -15,7 +15,7 @@ let collection;
 
 // --- CONFIGURACIÓN DE LOGOS ---
 // CAMBIA ESTO: Pon tu usuario y repositorio real de GitHub
-const GITHUB_LOGOS_BASE = "https://raw.githubusercontent.com/TU_USUARIO/TU_REPO/main/logos/";
+const GITHUB_LOGOS_BASE = "https://github.com/solarp099-boop/logos-tv.git";
 
 // Función para generar la URL del logo automáticamente
 function generateLogoUrl(name) {

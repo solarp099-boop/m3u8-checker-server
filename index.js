@@ -59,40 +59,6 @@ app.get("/streams", async (req, res) => {
   res.json(streams);
 });
 
-app.post("/addSpecific", async (req, res) => {
-  if (req.query.key !== API_KEY) return res.status(401).send("No autorizado");
-  const { name, url, category, targetId } = req.body;
-  
-  let newDate = new Date();
-  if (targetId) {
-    try {
-      const target = await collection.findOne({ _id: new ObjectId(targetId) });
-      if (target) {
-        // Buscamos el canal inmediatamente anterior al objetivo
-        const previous = await collection.find({ createdAt: { $lt: target.createdAt } })
-                                         .sort({ createdAt: -1 }).limit(1).toArray();
-        
-        const targetTime = target.createdAt.getTime();
-        // Si no hay anterior, restamos un margen generoso para que quede arriba
-        const prevTime = previous.length > 0 ? previous[0].createdAt.getTime() : targetTime - 50000;
-        
-        // Matemáticamente se inserta en el medio exacto de los dos timestamps
-        newDate = new Date((prevTime + targetTime) / 2);
-      }
-    } catch (e) { console.error("Error en posicionamiento:", e); }
-  }
-
-  await collection.insertOne({ 
-    name, 
-    url, 
-    category: category || "Nacionales", 
-    status: "unknown", 
-    createdAt: newDate 
-  });
-  // Redirigir con la llave para recargar el panel y ver el orden nuevo
-  res.redirect(`/admin?key=${API_KEY}`);
-});
-
 app.post("/update", async (req, res) => {
   if (req.query.key !== API_KEY) return res.status(401).send("No autorizado");
   const { id, url } = req.body;
@@ -111,12 +77,9 @@ app.post("/deleteAll", async (req, res) => {
   if (req.query.key !== API_KEY) return res.status(401).send("No autorizado");
   const { filterType, filterValue } = req.body;
   let query = {};
-  
-  // Esto borra los CANALES, pero no afecta a los botones del panel
   if (filterType === "category") query = { category: filterValue };
   if (filterType === "main") query = { category: "Pantalla Principal" };
   if (filterType === "all") query = {};
-
   await collection.deleteMany(query);
   res.json({ ok: true });
 });
@@ -124,6 +87,12 @@ app.post("/deleteAll", async (req, res) => {
 app.post("/addBulk", async (req, res) => {
   if (req.query.key !== API_KEY) return res.status(401).send("No autorizado");
   const { list, category } = req.body;
+  
+  // Normalizar categoría para Pantalla Principal o Nacionales
+  let finalCat = category;
+  if (category === "CANALES DE TODAS LAS SEÑALES") finalCat = "Nacionales";
+  if (category === "PANTALLA PRINCIPAL") finalCat = "Pantalla Principal";
+
   const lines = list.split("\n");
   const toInsert = [];
   const baseTime = Date.now();
@@ -133,7 +102,7 @@ app.post("/addBulk", async (req, res) => {
       toInsert.push({
         name: parts[0].trim(),
         url: parts[1].trim(),
-        category: category || "Nacionales",
+        category: finalCat || "Nacionales",
         status: "unknown",
         createdAt: new Date(baseTime + index)
       });
@@ -150,10 +119,8 @@ app.get("/admin", async (req, res) => {
   
   try {
     const streams = await collection.find().sort({ createdAt: 1 }).toArray();
-    // Definimos categorías fijas que NUNCA se borran del panel visual
-    const categoriasFijas = ["Cine", "Radio", "Infantiles", "Entretenimiento", "Deportes"];
+    const categoriasFijas = ["Cine", "Radio", "Infantiles", "Entretenimiento", "Deportes", "Nacionales"];
     
-    // Obtenemos categorías dinámicas de la DB (exceptuando las especiales)
     const extraCats = [...new Set(streams.map(s => s.category))]
                       .filter(c => !categoriasFijas.includes(c) && c !== "Pantalla Principal");
     
@@ -190,11 +157,10 @@ app.get("/admin", async (req, res) => {
         table { width: 100%; border-collapse: collapse; }
         td { padding: 10px; border-bottom: 1px solid #2a2a2a; }
         .btn-play { background: #444; border: none; color: white; padding: 8px 15px; border-radius: 5px; cursor: pointer; }
-        .btn-top-add { background: #2a2a2a; border: 1px dashed #555; color: #aaa; width: 100%; padding: 6px; cursor: pointer; border-radius: 4px; margin-bottom: 8px; font-size: 11px; }
-        .btn-top-add:hover { border-color: var(--success); color: var(--success); background: #1e2a1e; }
-        .insert-box { display: none; background: #222; padding: 12px; border: 1px solid var(--success); margin: 8px 0; border-radius: 6px; }
         .input-url { width: 100%; background: #0a0a0a; border: 1px solid #333; color: #ccc; padding: 8px; border-radius: 4px; }
         .cat-badge { font-size: 10px; background: #333; padding: 2px 6px; border-radius: 10px; color: #aaa; }
+        .cat-selector { background: #000; color: white; border: 1px solid #444; padding: 8px; flex: 1; border-radius: 4px; cursor: pointer; }
+        .cat-readonly { background: #111; color: #888; border: 1px solid #333; padding: 8px; flex: 1; border-radius: 4px; font-weight: bold; pointer-events: none; }
       </style>
     </head>
     <body>
@@ -215,9 +181,8 @@ app.get("/admin", async (req, res) => {
         <h4 style="margin:0 0 10px 0;">➕ Carga Masiva</h4>
         <form method="POST" action="/addBulk?key=${API_KEY}">
           <textarea name="list" rows="2" placeholder="Nombre, URL"></textarea>
-          <div style="margin-top:10px; display:flex; gap:10px;">
-            <input name="category" id="bulkCatInput" placeholder="Categoría" style="background:#000; color:white; border:1px solid #444; padding:8px; flex:1; border-radius:4px;">
-            <button class="nav-btn" style="background:var(--success)">Agregar al final</button>
+          <div style="margin-top:10px; display:flex; gap:10px;" id="cat-input-container">
+            <!-- El selector se inyecta por JS según la pestaña activa -->
           </div>
         </form>
       </div>
@@ -246,60 +211,56 @@ app.get("/admin", async (req, res) => {
         const API_KEY = "${API_KEY}";
         let autoRefresh = true;
         const allStreams = ${JSON.stringify(streams)};
+        const categoriasArray = ${JSON.stringify(todasLasCategorias)};
 
         function toggleRefresh() { autoRefresh = !autoRefresh; document.getElementById("btnAutoRefresh").innerText = autoRefresh ? "⏸ Pausar" : "▶ Reanudar"; }
         setInterval(() => { if(autoRefresh) location.reload(); }, 45000);
+
+        function updateCatInput(view, selectedCat = "") {
+          const container = document.getElementById('cat-input-container');
+          if (view === 'main') {
+            container.innerHTML = \`<input name="category" class="cat-readonly" value="PANTALLA PRINCIPAL" readonly> <button class="nav-btn" style="background:var(--success)">Agregar al final</button>\`;
+          } else if (view === 'all') {
+            container.innerHTML = \`<input name="category" class="cat-readonly" value="CANALES DE TODAS LAS SEÑALES" readonly> <button class="nav-btn" style="background:var(--success)">Agregar al final</button>\`;
+          } else {
+            let options = categoriasArray.map(c => \`<option value="\${c}" \${c === selectedCat ? 'selected' : ''}>\${c}</option>\`).join('');
+            container.innerHTML = \`
+              <select name="category" class="cat-selector" id="dynamicSelector">
+                \${options}
+              </select>
+              <button class="nav-btn" style="background:var(--success)">Agregar al final</button>\`;
+          }
+        }
+
+        // Inicializar input
+        updateCatInput('all');
 
         function showView(view, btn) {
           document.querySelectorAll('.view-container').forEach(v => v.classList.remove('active'));
           document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
           document.getElementById('view-' + view).classList.add('active');
           btn.classList.add('active');
-          const bulkInput = document.getElementById('bulkCatInput');
-          if(view === 'main') bulkInput.value = 'Pantalla Principal';
-          else if (view === 'all') bulkInput.value = '';
+          updateCatInput(view);
         }
 
-        window.showInsert = function(id) {
-          const box = document.getElementById('insert-' + id);
-          const isVisible = box.style.display === 'block';
-          document.querySelectorAll('.insert-box').forEach(b => b.style.display = 'none');
-          box.style.display = isVisible ? 'none' : 'block';
-        };
-
-        function generarFilaCategoriaHTML(s) {
-          return \`
+        function filterCat(cat) {
+          document.getElementById('cat-actions').style.display = 'block';
+          document.getElementById('btnDelCat').onclick = () => borrarMasivo('category', cat);
+          updateCatInput('categories', cat);
+          const filtered = allStreams.filter(s => s.category === cat);
+          let html = "";
+          filtered.forEach(s => {
+            html += \`
             <tr id="row-\${s._id}">
               <td width="30">\${s.status === 'online' ? '🟢' : '🔴'}</td>
-              <td width="220">
-                <button class="btn-top-add" onclick="showInsert('\${s._id}')">➕ Agregar encima de \${s.name}</button>
-                <div id="insert-\${s._id}" class="insert-box">
-                   <form method="POST" action="/addSpecific?key=\${API_KEY}">
-                     <input name="name" placeholder="Nombre" style="width:90%; margin-bottom:5px; padding:5px;" required>
-                     <input name="url" placeholder="URL" style="width:90%; margin-bottom:5px; padding:5px;" required>
-                     <input type="hidden" name="category" value="\${s.category}">
-                     <input type="hidden" name="targetId" value="\${s._id}">
-                     <button class="nav-btn" style="background:var(--success); width:100%; margin-top:5px;">Insertar ahora</button>
-                   </form>
-                </div>
-                <b>\${s.name}</b><br/>
-                <span class="cat-badge">\${s.category}</span>
-              </td>
+              <td width="220"><b>\${s.name}</b><br/><span class="cat-badge">\${s.category}</span></td>
               <td><input class="input-url" id="url-\${s._id}" value="\${s.url}"></td>
               <td width="100">
                 <button class="btn-play" onclick="guardar('\${s._id}')">💾</button>
                 <button class="btn-play" style="background:var(--danger)" onclick="eliminar('\${s._id}')">❌</button>
               </td>
             </tr>\`;
-        }
-
-        function filterCat(cat) {
-          document.getElementById('cat-actions').style.display = 'block';
-          document.getElementById('btnDelCat').onclick = () => borrarMasivo('category', cat);
-          document.getElementById('bulkCatInput').value = cat;
-          const filtered = allStreams.filter(s => s.category === cat);
-          let html = "";
-          filtered.forEach(s => { html += generarFilaCategoriaHTML(s); });
+          });
           document.getElementById('cat-table-body').innerHTML = html;
         }
 
@@ -314,7 +275,7 @@ app.get("/admin", async (req, res) => {
         }
 
         async function eliminar(id) {
-          if(!confirm("¿Deseas eliminar este canal?")) return;
+          if(!confirm("¿Eliminar este canal?")) return;
           await fetch("/deleteStream?key=" + API_KEY, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -324,7 +285,7 @@ app.get("/admin", async (req, res) => {
         }
 
         async function borrarMasivo(type, value = '') {
-          const msg = type === 'category' ? \`¿Borrar todos los canales de "\${value}"?\` : "¿Borrar todo?";
+          const msg = type === 'category' ? \`¿Borrar canales de "\${value}"?\` : "¿Borrar todo?";
           if (!confirm(msg)) return;
           await fetch("/deleteAll?key=" + API_KEY, {
             method: "POST",
@@ -339,9 +300,9 @@ app.get("/admin", async (req, res) => {
     `;
     res.send(html);
   } catch (err) {
-    res.status(500).send("Error de servidor");
+    res.status(500).send("Error");
   }
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log("🚀 Sistema de Gestión IPTV Online"));
+app.listen(PORT, () => console.log("🚀 Sistema IPTV Actualizado"));

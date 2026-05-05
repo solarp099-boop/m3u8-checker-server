@@ -55,12 +55,10 @@ async function checkStreams() {
 
 app.get("/streams", async (req, res) => {
   if (req.query.key !== API_KEY) return res.status(401).json([]);
-  // Ordenar siempre por createdAt para mantener la posición lógica
   const streams = await collection.find().sort({ createdAt: 1 }).toArray(); 
   res.json(streams);
 });
 
-// ESTA ES LA FUNCIÓN CRÍTICA PARA EL ORDEN "ENCIMA DE"
 app.post("/addSpecific", async (req, res) => {
   if (req.query.key !== API_KEY) return res.status(401).send("No autorizado");
   const { name, url, category, targetId } = req.body;
@@ -70,14 +68,15 @@ app.post("/addSpecific", async (req, res) => {
     try {
       const target = await collection.findOne({ _id: new ObjectId(targetId) });
       if (target) {
-        // Buscamos el elemento que está inmediatamente antes del actual en el tiempo
+        // Buscamos el canal inmediatamente anterior al objetivo
         const previous = await collection.find({ createdAt: { $lt: target.createdAt } })
                                          .sort({ createdAt: -1 }).limit(1).toArray();
         
         const targetTime = target.createdAt.getTime();
-        const prevTime = previous.length > 0 ? previous[0].createdAt.getTime() : targetTime - 10000;
+        // Si no hay anterior, restamos un margen generoso para que quede arriba
+        const prevTime = previous.length > 0 ? previous[0].createdAt.getTime() : targetTime - 50000;
         
-        // Creamos una fecha JUSTO EN MEDIO de los dos
+        // Matemáticamente se inserta en el medio exacto de los dos timestamps
         newDate = new Date((prevTime + targetTime) / 2);
       }
     } catch (e) { console.error("Error en posicionamiento:", e); }
@@ -90,6 +89,7 @@ app.post("/addSpecific", async (req, res) => {
     status: "unknown", 
     createdAt: newDate 
   });
+  // Redirigir con la llave para recargar el panel y ver el orden nuevo
   res.redirect(`/admin?key=${API_KEY}`);
 });
 
@@ -111,8 +111,12 @@ app.post("/deleteAll", async (req, res) => {
   if (req.query.key !== API_KEY) return res.status(401).send("No autorizado");
   const { filterType, filterValue } = req.body;
   let query = {};
+  
+  // Esto borra los CANALES, pero no afecta a los botones del panel
   if (filterType === "category") query = { category: filterValue };
   if (filterType === "main") query = { category: "Pantalla Principal" };
+  if (filterType === "all") query = {};
+
   await collection.deleteMany(query);
   res.json({ ok: true });
 });
@@ -146,9 +150,14 @@ app.get("/admin", async (req, res) => {
   
   try {
     const streams = await collection.find().sort({ createdAt: 1 }).toArray();
+    // Definimos categorías fijas que NUNCA se borran del panel visual
     const categoriasFijas = ["Cine", "Radio", "Infantiles", "Entretenimiento", "Deportes"];
-    const todasLasCategorias = [...new Set([...categoriasFijas, ...streams.map(s => s.category)])]
-                                .filter(c => c !== "Pantalla Principal" && c !== "Otros");
+    
+    // Obtenemos categorías dinámicas de la DB (exceptuando las especiales)
+    const extraCats = [...new Set(streams.map(s => s.category))]
+                      .filter(c => !categoriasFijas.includes(c) && c !== "Pantalla Principal");
+    
+    const todasLasCategorias = [...categoriasFijas, ...extraCats];
 
     const renderRowSimple = (s) => `
     <tr id="row-${s._id}">
@@ -181,9 +190,9 @@ app.get("/admin", async (req, res) => {
         table { width: 100%; border-collapse: collapse; }
         td { padding: 10px; border-bottom: 1px solid #2a2a2a; }
         .btn-play { background: #444; border: none; color: white; padding: 8px 15px; border-radius: 5px; cursor: pointer; }
-        .btn-top-add { background: none; border: 1px dashed #555; color: #888; width: 100%; padding: 4px; cursor: pointer; border-radius: 4px; margin-bottom: 5px; font-size: 11px; }
-        .btn-top-add:hover { border-color: var(--success); color: var(--success); }
-        .insert-box { display: none; background: #222; padding: 10px; border-left: 4px solid var(--success); margin: 5px 0; border-radius: 4px; }
+        .btn-top-add { background: #2a2a2a; border: 1px dashed #555; color: #aaa; width: 100%; padding: 6px; cursor: pointer; border-radius: 4px; margin-bottom: 8px; font-size: 11px; }
+        .btn-top-add:hover { border-color: var(--success); color: var(--success); background: #1e2a1e; }
+        .insert-box { display: none; background: #222; padding: 12px; border: 1px solid var(--success); margin: 8px 0; border-radius: 6px; }
         .input-url { width: 100%; background: #0a0a0a; border: 1px solid #333; color: #ccc; padding: 8px; border-radius: 4px; }
         .cat-badge { font-size: 10px; background: #333; padding: 2px 6px; border-radius: 10px; color: #aaa; }
       </style>
@@ -223,7 +232,7 @@ app.get("/admin", async (req, res) => {
            ${todasLasCategorias.map(cat => `<button class="nav-btn" style="font-size:11px; padding:6px 12px;" onclick="filterCat('${cat}')">${cat}</button>`).join('')}
          </div>
          <div id="cat-actions" style="display:none">
-            <button class="btn-danger-all" id="btnDelCat">🗑 Limpiar Categoría</button>
+            <button class="btn-danger-all" id="btnDelCat">🗑 Limpiar Canales de la Categoría</button>
             <table id="cat-table-body"></table>
          </div>
       </div>
@@ -239,7 +248,7 @@ app.get("/admin", async (req, res) => {
         const allStreams = ${JSON.stringify(streams)};
 
         function toggleRefresh() { autoRefresh = !autoRefresh; document.getElementById("btnAutoRefresh").innerText = autoRefresh ? "⏸ Pausar" : "▶ Reanudar"; }
-        setInterval(() => { if(autoRefresh) location.reload(); }, 40000);
+        setInterval(() => { if(autoRefresh) location.reload(); }, 45000);
 
         function showView(view, btn) {
           document.querySelectorAll('.view-container').forEach(v => v.classList.remove('active'));
@@ -266,11 +275,11 @@ app.get("/admin", async (req, res) => {
                 <button class="btn-top-add" onclick="showInsert('\${s._id}')">➕ Agregar encima de \${s.name}</button>
                 <div id="insert-\${s._id}" class="insert-box">
                    <form method="POST" action="/addSpecific?key=\${API_KEY}">
-                     <input name="name" placeholder="Nombre" style="width:90%; margin-bottom:5px;" required>
-                     <input name="url" placeholder="URL" style="width:90%; margin-bottom:5px;" required>
+                     <input name="name" placeholder="Nombre" style="width:90%; margin-bottom:5px; padding:5px;" required>
+                     <input name="url" placeholder="URL" style="width:90%; margin-bottom:5px; padding:5px;" required>
                      <input type="hidden" name="category" value="\${s.category}">
                      <input type="hidden" name="targetId" value="\${s._id}">
-                     <button class="nav-btn" style="background:var(--success); padding:5px 10px; font-size:12px;">Insertar ahora</button>
+                     <button class="nav-btn" style="background:var(--success); width:100%; margin-top:5px;">Insertar ahora</button>
                    </form>
                 </div>
                 <b>\${s.name}</b><br/>
@@ -301,11 +310,11 @@ app.get("/admin", async (req, res) => {
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ id, url })
           });
-          alert("Guardado");
+          alert("Cambios guardados");
         }
 
         async function eliminar(id) {
-          if(!confirm("¿Eliminar?")) return;
+          if(!confirm("¿Deseas eliminar este canal?")) return;
           await fetch("/deleteStream?key=" + API_KEY, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -315,7 +324,8 @@ app.get("/admin", async (req, res) => {
         }
 
         async function borrarMasivo(type, value = '') {
-          if (!confirm("¿Borrar sección?")) return;
+          const msg = type === 'category' ? \`¿Borrar todos los canales de "\${value}"?\` : "¿Borrar todo?";
+          if (!confirm(msg)) return;
           await fetch("/deleteAll?key=" + API_KEY, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -329,9 +339,9 @@ app.get("/admin", async (req, res) => {
     `;
     res.send(html);
   } catch (err) {
-    res.status(500).send("Error interno");
+    res.status(500).send("Error de servidor");
   }
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log("🚀 Servidor IPTV OK"));
+app.listen(PORT, () => console.log("🚀 Sistema de Gestión IPTV Online"));

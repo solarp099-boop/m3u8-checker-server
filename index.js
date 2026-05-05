@@ -138,7 +138,7 @@ app.get("/admin", async (req, res) => {
     const categoriasFijas = ["Cine", "Radio", "Infantiles", "Entretenimiento", "Deportes", "Nacionales"];
     const todasLasCategorias = [...new Set([...categoriasFijas, ...streams.map(s => s.category)])];
 
-    // Función de renderizado para el servidor
+    // Función de renderizado para el servidor (Usada para carga inicial)
     const renderRowServer = (s) => `
     <tr id="main-row-${s._id}">
       <td width="30">${s.status === 'online' ? '🟢' : '🔴'}</td>
@@ -227,7 +227,7 @@ app.get("/admin", async (req, res) => {
 
       <div id="view-all" class="view-container active">
         <button class="btn-danger-all" onclick="borrarMasivo('all')">🗑 Borrar TODO</button>
-        <table>${streams.map(s => renderRowServer(s)).join('')}</table>
+        <table id="all-table-body">${streams.map(s => renderRowServer(s)).join('')}</table>
       </div>
 
       <div id="view-categories" class="view-container">
@@ -242,7 +242,7 @@ app.get("/admin", async (req, res) => {
 
       <div id="view-main" class="view-container">
          <button class="btn-danger-all" onclick="borrarMasivo('main')">🗑 Limpiar Nacionales</button>
-         <table>${streams.filter(s => s.category === "Nacionales").map(s => renderRowServer(s)).join('')}</table>
+         <table id="main-table-body">${streams.filter(s => s.category === "Nacionales").map(s => renderRowServer(s)).join('')}</table>
       </div>
 
       <script>
@@ -261,15 +261,53 @@ app.get("/admin", async (req, res) => {
           if(view === 'main') document.getElementById('bulkCatInput').value = 'Nacionales';
         }
 
-        // FUNCIÓN GLOBAL
+        // FUNCIÓN CLAVE: Ahora es global y robusta
         window.showInsert = function(id) {
           const box = document.getElementById('insert-' + id);
-          if(!box) return;
+          if(!box) {
+             console.error("No se encontró el elemento insert-" + id);
+             return;
+          }
           const isVisible = box.style.display === 'block';
-          // Cerramos otros por comodidad
           document.querySelectorAll('.insert-box').forEach(b => b.style.display = 'none');
           box.style.display = isVisible ? 'none' : 'block';
         };
+
+        // FUNCIÓN PARA GENERAR EL HTML DE LA FILA EN EL CLIENTE
+        function generarFilaHTML(s) {
+          return \`
+            <tr id="main-row-\${s._id}">
+              <td width="30">\${s.status === 'online' ? '🟢' : '🔴'}</td>
+              <td width="220">
+                <button class="btn-top-add" onclick="showInsert('\${s._id}')">➕ Agregar encima de \${s.name}</button>
+                <div id="insert-\${s._id}" class="insert-box">
+                   <form method="POST" action="/addSpecific?key=\${API_KEY}">
+                     <input name="name" placeholder="Nombre" style="width:90%; margin-bottom:5px;" required>
+                     <input name="url" placeholder="URL" style="width:90%; margin-bottom:5px;" required>
+                     <input type="hidden" name="category" value="\${s.category}">
+                     <input type="hidden" name="targetId" value="\${s._id}">
+                     <button class="btn-plus">Añadir aquí</button>
+                   </form>
+                </div>
+                <b>\${s.name}</b><br/>
+                <span class="cat-badge">\${s.category}</span><br/>
+                <button class="btn-plus" style="margin-top:5px" onclick="showInsert('\${s._id}_below')">+</button>
+                <div id="insert-\${s._id}_below" class="insert-box">
+                   <form method="POST" action="/addSpecific?key=\${API_KEY}">
+                     <input name="name" placeholder="Nombre" style="width:90%;" required>
+                     <input name="url" placeholder="URL" style="width:90%;" required>
+                     <input type="hidden" name="category" value="\${s.category}">
+                     <button class="btn-plus">Añadir al final</button>
+                   </form>
+                </div>
+              </td>
+              <td><input class="input-url" id="url-\${s._id}" value="\${s.url}"></td>
+              <td width="100">
+                <button class="btn-play" onclick="guardar('\${s._id}')">💾</button>
+                <button class="btn-play" style="background:var(--danger)" onclick="eliminar('\${s._id}')">❌</button>
+              </td>
+            </tr>\`;
+        }
 
         function filterCat(cat) {
           document.getElementById('cat-actions').style.display = 'block';
@@ -279,37 +317,7 @@ app.get("/admin", async (req, res) => {
           
           let html = "";
           filtered.forEach(s => {
-            html += \`<tr>
-                <td width="30">\${s.status === 'online' ? '🟢' : '🔴'}</td>
-                <td width="220">
-                  <button class="btn-top-add" onclick="showInsert('\${s._id}')">➕ Agregar encima de \${s.name}</button>
-                  <div id="insert-\${s._id}" class="insert-box">
-                     <form method="POST" action="/addSpecific?key=\${API_KEY}">
-                       <input name="name" placeholder="Nombre" style="width:90%; margin-bottom:5px;" required>
-                       <input name="url" placeholder="URL" style="width:90%; margin-bottom:5px;" required>
-                       <input type="hidden" name="category" value="\${s.category}">
-                       <input type="hidden" name="targetId" value="\${s._id}">
-                       <button class="btn-plus">Añadir aquí</button>
-                     </form>
-                  </div>
-                  <b>\${s.name}</b><br/>
-                  <span class="cat-badge">\${s.category}</span><br/>
-                  <button class="btn-plus" style="margin-top:5px" onclick="showInsert('\${s._id}_below')">+</button>
-                  <div id="insert-\${s._id}_below" class="insert-box">
-                     <form method="POST" action="/addSpecific?key=\${API_KEY}">
-                       <input name="name" placeholder="Nombre" style="width:90%;" required>
-                       <input name="url" placeholder="URL" style="width:90%;" required>
-                       <input type="hidden" name="category" value="\${s.category}">
-                       <button class="btn-plus">Añadir al final</button>
-                     </form>
-                  </div>
-                </td>
-                <td><input class="input-url" id="url-\${s._id}" value="\${s.url}"></td>
-                <td width="100">
-                  <button class="btn-play" onclick="guardar('\${s._id}')">💾</button>
-                  <button class="btn-play" style="background:var(--danger)" onclick="eliminar('\${s._id}')">❌</button>
-                </td>
-              </tr>\`;
+            html += generarFilaHTML(s);
           });
           document.getElementById('cat-table-body').innerHTML = html;
         }

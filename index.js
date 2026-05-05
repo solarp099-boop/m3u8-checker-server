@@ -16,8 +16,10 @@ let collection;
 // --- CONFIGURACIÓN DE LOGOS (ACTUALIZADA CON TU GITHUB) ---
 const GITHUB_LOGOS_BASE = "https://raw.githubusercontent.com/solarp099-boop/logos-tv/main/";
 
+// Función que arma el link usando el NOMBRE del canal + .png
 function generateLogoUrl(name) {
   if (!name) return "";
+  // encodeURIComponent convierte espacios en %20 para que el link sea válido
   const cleanName = encodeURIComponent(name.trim());
   return `${GITHUB_LOGOS_BASE}${cleanName}.png`;
 }
@@ -31,7 +33,7 @@ async function conectarDB() {
   } catch (e) { console.error("❌ Error MongoDB:", e); }
 }
 
-// Checker de estado
+// Checker de estado (Se mantiene intacto)
 let checking = false;
 async function checkStreams() {
   if (checking || !collection) return;
@@ -62,21 +64,6 @@ async function checkStreams() {
 
 // --- APIS ---
 
-// RUTA PARA EL INICIO (MainActivity) - Solo canales de "Pantalla Principal"
-app.get("/streams/main", async (req, res) => {
-  if (req.query.key !== API_KEY) return res.status(401).json([]);
-  const streams = await collection.find({ category: "Pantalla Principal" }).sort({ createdAt: 1 }).toArray(); 
-  res.json(streams);
-});
-
-// RUTA PARA TODAS LAS SEÑALES (TodasLasSenalesActivity) - Todo el contenido
-app.get("/streams/all", async (req, res) => {
-  if (req.query.key !== API_KEY) return res.status(401).json([]);
-  const streams = await collection.find().sort({ createdAt: 1 }).toArray(); 
-  res.json(streams);
-});
-
-// Ruta genérica (mantenida por compatibilidad)
 app.get("/streams", async (req, res) => {
   if (req.query.key !== API_KEY) return res.status(401).json([]);
   const streams = await collection.find().sort({ createdAt: 1 }).toArray(); 
@@ -86,11 +73,14 @@ app.get("/streams", async (req, res) => {
 app.post("/update", async (req, res) => {
   if (req.query.key !== API_KEY) return res.status(401).send("No autorizado");
   const { id, url, name } = req.body;
+  
+  // Si actualizas, se recalcula el logo por si cambiaste el nombre
   const updateData = { url: url };
   if (name) {
     updateData.name = name;
     updateData.logo = generateLogoUrl(name);
   }
+
   await collection.updateOne({ _id: new ObjectId(id) }, { $set: updateData });
   res.json({ ok: true });
 });
@@ -131,7 +121,7 @@ app.post("/addBulk", async (req, res) => {
       toInsert.push({
         name: channelName,
         url: parts[1].trim(),
-        logo: generateLogoUrl(channelName),
+        logo: generateLogoUrl(channelName), // Llama al logo por el NOMBRE
         category: finalCat || "Nacionales",
         status: "unknown",
         createdAt: new Date(baseTime + index)
@@ -174,7 +164,7 @@ app.get("/admin", async (req, res) => {
     <!DOCTYPE html>
     <html>
     <head>
-      <title>IPTV Manager - Pantallas Separadas</title>
+      <title>IPTV Manager - Logos Automáticos</title>
       <style>
         :root { --bg: #0f0f0f; --card: #1a1a1a; --primary: #3d5afe; --danger: #ff1744; --success: #28a745; --text: #ffffff; }
         body { font-family: 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); margin: 0; padding: 20px; }
@@ -329,4 +319,4 @@ app.get("/admin", async (req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log("🚀 Servidor IPTV Actualizado"));
+app.listen(PORT, () => console.log("🚀 IPTV Manager con Logos Automáticos por Nombre"));

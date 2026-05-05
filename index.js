@@ -85,7 +85,7 @@ app.post("/addSpecific", async (req, res) => {
   await collection.insertOne({ 
     name, 
     url, 
-    category: category || "Otros", 
+    category: category || "Nacionales", 
     status: "unknown", 
     createdAt: newDate 
   });
@@ -133,7 +133,7 @@ app.post("/addBulk", async (req, res) => {
       toInsert.push({
         name: parts[0].trim(),
         url: parts[1].trim(),
-        category: category || "Otros",
+        category: category || "Nacionales",
         status: "unknown",
         createdAt: new Date(baseTime + index)
       });

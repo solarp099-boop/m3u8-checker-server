@@ -78,7 +78,7 @@ app.post("/deleteAll", async (req, res) => {
   const { filterType, filterValue } = req.body;
   let query = {};
   if (filterType === "category") query = { category: filterValue };
-  if (filterType === "main") query = { category: "Nacionales" };
+  if (filterType === "main") query = { category: "Pantalla Principal" };
   await collection.deleteMany(query);
   res.json({ ok: true });
 });
@@ -112,10 +112,9 @@ app.get("/admin", async (req, res) => {
   
   try {
     const streams = await collection.find().sort({ createdAt: 1 }).toArray();
-    const categoriasFijas = ["Cine", "Radio", "Infantiles", "Entretenimiento", "Deportes", "Nacionales"];
+    const categoriasFijas = ["Cine", "Radio", "Infantiles", "Entretenimiento", "Deportes", "Pantalla Principal"];
     const todasLasCategorias = [...new Set([...categoriasFijas, ...streams.map(s => s.category)])];
 
-    // Función de renderizado para el servidor (SIN BOTONES DE AGREGAR ENCIMA/ABAJO)
     const renderRowServer = (s) => `
     <tr id="main-row-${s._id}">
       <td width="30">${s.status === 'online' ? '🟢' : '🔴'}</td>
@@ -173,7 +172,7 @@ app.get("/admin", async (req, res) => {
         <form method="POST" action="/addBulk?key=${API_KEY}">
           <textarea name="list" rows="2" placeholder="Nombre, URL"></textarea>
           <div style="margin-top:10px; display:flex; gap:10px;">
-            <input name="category" id="bulkCatInput" placeholder="Categoría (Ej: Nacionales)" style="background:#000; color:white; border:1px solid #444; padding:8px; flex:1; border-radius:4px;">
+            <input name="category" id="bulkCatInput" placeholder="Categoría" style="background:#000; color:white; border:1px solid #444; padding:8px; flex:1; border-radius:4px;">
             <button class="nav-btn" style="background:var(--success)">Agregar al final</button>
           </div>
         </form>
@@ -195,8 +194,8 @@ app.get("/admin", async (req, res) => {
       </div>
 
       <div id="view-main" class="view-container">
-         <button class="btn-danger-all" onclick="borrarMasivo('main')">🗑 Limpiar Nacionales</button>
-         <table id="main-table-body">${streams.filter(s => s.category === "Nacionales").map(s => renderRowServer(s)).join('')}</table>
+         <button class="btn-danger-all" onclick="borrarMasivo('main')">🗑 Limpiar Pantalla Principal</button>
+         <table id="main-table-body">${streams.filter(s => s.category === "Pantalla Principal").map(s => renderRowServer(s)).join('')}</table>
       </div>
 
       <script>
@@ -212,10 +211,16 @@ app.get("/admin", async (req, res) => {
           document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
           document.getElementById('view-' + view).classList.add('active');
           btn.classList.add('active');
-          if(view === 'main') document.getElementById('bulkCatInput').value = 'Nacionales';
+          
+          // Ajuste automático de la categoría para carga masiva
+          const bulkInput = document.getElementById('bulkCatInput');
+          if(view === 'main') {
+            bulkInput.value = 'Pantalla Principal';
+          } else if (view === 'all') {
+            bulkInput.value = '';
+          }
         }
 
-        // Función para generar filas limpias en el cliente
         function generarFilaHTML(s) {
           return \`
             <tr id="main-row-\${s._id}">

@@ -59,29 +59,6 @@ app.get("/streams", async (req, res) => {
   res.json(streams);
 });
 
-app.post("/addSpecific", async (req, res) => {
-  if (req.query.key !== API_KEY) return res.status(401).send("No autorizado");
-  const { name, url, category, targetId } = req.body;
-  
-  let newDate = new Date();
-  if (targetId) {
-    try {
-      const target = await collection.findOne({ _id: new ObjectId(targetId) });
-      if (target) {
-        const previous = await collection.find({ createdAt: { $lt: target.createdAt } })
-                                         .sort({ createdAt: -1 }).limit(1).toArray();
-        
-        const prevTime = previous.length > 0 ? previous[0].createdAt.getTime() : target.createdAt.getTime() - 1000;
-        const targetTime = target.createdAt.getTime();
-        newDate = new Date((prevTime + targetTime) / 2);
-      }
-    } catch (e) { console.error("Error en addSpecific:", e); }
-  }
-
-  await collection.insertOne({ name, url, category: category || "Otros", status: "unknown", createdAt: newDate });
-  res.redirect(`/admin?key=${API_KEY}`);
-});
-
 app.post("/update", async (req, res) => {
   if (req.query.key !== API_KEY) return res.status(401).send("No autorizado");
   const { id, url } = req.body;
@@ -138,32 +115,13 @@ app.get("/admin", async (req, res) => {
     const categoriasFijas = ["Cine", "Radio", "Infantiles", "Entretenimiento", "Deportes", "Nacionales"];
     const todasLasCategorias = [...new Set([...categoriasFijas, ...streams.map(s => s.category)])];
 
-    // Función de renderizado para el servidor (Usada para carga inicial)
+    // Función de renderizado para el servidor (SIN BOTONES DE AGREGAR ENCIMA/ABAJO)
     const renderRowServer = (s) => `
     <tr id="main-row-${s._id}">
       <td width="30">${s.status === 'online' ? '🟢' : '🔴'}</td>
       <td width="220">
-        <button class="btn-top-add" onclick="showInsert('${s._id}')">➕ Agregar encima de ${s.name}</button>
-        <div id="insert-${s._id}" class="insert-box">
-           <form method="POST" action="/addSpecific?key=${API_KEY}">
-             <input name="name" placeholder="Nombre" style="width:90%; margin-bottom:5px;" required>
-             <input name="url" placeholder="URL" style="width:90%; margin-bottom:5px;" required>
-             <input type="hidden" name="category" value="${s.category}">
-             <input type="hidden" name="targetId" value="${s._id}">
-             <button class="btn-plus">Añadir aquí</button>
-           </form>
-        </div>
         <b>${s.name}</b><br/>
-        <span class="cat-badge">${s.category}</span><br/>
-        <button class="btn-plus" style="margin-top:5px" onclick="showInsert('${s._id}_below')">+</button>
-        <div id="insert-${s._id}_below" class="insert-box">
-           <form method="POST" action="/addSpecific?key=${API_KEY}">
-             <input name="name" placeholder="Nombre" style="width:90%;" required>
-             <input name="url" placeholder="URL" style="width:90%;" required>
-             <input type="hidden" name="category" value="${s.category}">
-             <button class="btn-plus">Añadir al final</button>
-           </form>
-        </div>
+        <span class="cat-badge">${s.category}</span>
       </td>
       <td><input class="input-url" id="url-${s._id}" value="${s.url}"></td>
       <td width="100">
@@ -192,10 +150,6 @@ app.get("/admin", async (req, res) => {
         table { width: 100%; border-collapse: collapse; }
         td { padding: 10px; border-bottom: 1px solid #2a2a2a; position: relative; }
         .btn-play { background: #444; border: none; color: white; padding: 8px 15px; border-radius: 5px; cursor: pointer; }
-        .btn-plus { background: var(--success); color: white; border: none; padding: 4px 8px; border-radius: 4px; cursor: pointer; font-size: 12px; }
-        .btn-top-add { background: none; border: 1px dashed #555; color: #888; width: 100%; padding: 2px; cursor: pointer; border-radius: 4px; margin-bottom: 5px; font-size: 10px; transition: 0.3s; }
-        .btn-top-add:hover { border-color: var(--success); color: var(--success); }
-        .insert-box { display: none; background: #222; padding: 10px; border-left: 4px solid var(--success); margin: 5px 0; border-radius: 4px; }
         .input-url { width: 100%; background: #0a0a0a; border: 1px solid #333; color: #ccc; padding: 8px; border-radius: 4px; }
         .cat-badge { font-size: 10px; background: #333; padding: 2px 6px; border-radius: 10px; color: #aaa; }
       </style>
@@ -219,7 +173,7 @@ app.get("/admin", async (req, res) => {
         <form method="POST" action="/addBulk?key=${API_KEY}">
           <textarea name="list" rows="2" placeholder="Nombre, URL"></textarea>
           <div style="margin-top:10px; display:flex; gap:10px;">
-            <input name="category" id="bulkCatInput" placeholder="Categoría" style="background:#000; color:white; border:1px solid #444; padding:8px; flex:1; border-radius:4px;">
+            <input name="category" id="bulkCatInput" placeholder="Categoría (Ej: Nacionales)" style="background:#000; color:white; border:1px solid #444; padding:8px; flex:1; border-radius:4px;">
             <button class="nav-btn" style="background:var(--success)">Agregar al final</button>
           </div>
         </form>
@@ -261,45 +215,14 @@ app.get("/admin", async (req, res) => {
           if(view === 'main') document.getElementById('bulkCatInput').value = 'Nacionales';
         }
 
-        // FUNCIÓN CLAVE: Ahora es global y robusta
-        window.showInsert = function(id) {
-          const box = document.getElementById('insert-' + id);
-          if(!box) {
-             console.error("No se encontró el elemento insert-" + id);
-             return;
-          }
-          const isVisible = box.style.display === 'block';
-          document.querySelectorAll('.insert-box').forEach(b => b.style.display = 'none');
-          box.style.display = isVisible ? 'none' : 'block';
-        };
-
-        // FUNCIÓN PARA GENERAR EL HTML DE LA FILA EN EL CLIENTE
+        // Función para generar filas limpias en el cliente
         function generarFilaHTML(s) {
           return \`
             <tr id="main-row-\${s._id}">
               <td width="30">\${s.status === 'online' ? '🟢' : '🔴'}</td>
               <td width="220">
-                <button class="btn-top-add" onclick="showInsert('\${s._id}')">➕ Agregar encima de \${s.name}</button>
-                <div id="insert-\${s._id}" class="insert-box">
-                   <form method="POST" action="/addSpecific?key=\${API_KEY}">
-                     <input name="name" placeholder="Nombre" style="width:90%; margin-bottom:5px;" required>
-                     <input name="url" placeholder="URL" style="width:90%; margin-bottom:5px;" required>
-                     <input type="hidden" name="category" value="\${s.category}">
-                     <input type="hidden" name="targetId" value="\${s._id}">
-                     <button class="btn-plus">Añadir aquí</button>
-                   </form>
-                </div>
                 <b>\${s.name}</b><br/>
-                <span class="cat-badge">\${s.category}</span><br/>
-                <button class="btn-plus" style="margin-top:5px" onclick="showInsert('\${s._id}_below')">+</button>
-                <div id="insert-\${s._id}_below" class="insert-box">
-                   <form method="POST" action="/addSpecific?key=\${API_KEY}">
-                     <input name="name" placeholder="Nombre" style="width:90%;" required>
-                     <input name="url" placeholder="URL" style="width:90%;" required>
-                     <input type="hidden" name="category" value="\${s.category}">
-                     <button class="btn-plus">Añadir al final</button>
-                   </form>
-                </div>
+                <span class="cat-badge">\${s.category}</span>
               </td>
               <td><input class="input-url" id="url-\${s._id}" value="\${s.url}"></td>
               <td width="100">

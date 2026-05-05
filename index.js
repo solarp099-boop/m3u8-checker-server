@@ -59,6 +59,29 @@ app.get("/streams", async (req, res) => {
   res.json(streams);
 });
 
+app.post("/addSpecific", async (req, res) => {
+  if (req.query.key !== API_KEY) return res.status(401).send("No autorizado");
+  const { name, url, category, targetId } = req.body;
+  
+  let newDate = new Date();
+  if (targetId) {
+    try {
+      const target = await collection.findOne({ _id: new ObjectId(targetId) });
+      if (target) {
+        const previous = await collection.find({ createdAt: { $lt: target.createdAt } })
+                                         .sort({ createdAt: -1 }).limit(1).toArray();
+        
+        const prevTime = previous.length > 0 ? previous[0].createdAt.getTime() : target.createdAt.getTime() - 1000;
+        const targetTime = target.createdAt.getTime();
+        newDate = new Date((prevTime + targetTime) / 2);
+      }
+    } catch (e) { console.error("Error en addSpecific:", e); }
+  }
+
+  await collection.insertOne({ name, url, category: category || "Otros", status: "unknown", createdAt: newDate });
+  res.redirect(`/admin?key=${API_KEY}`);
+});
+
 app.post("/update", async (req, res) => {
   if (req.query.key !== API_KEY) return res.status(401).send("No autorizado");
   const { id, url } = req.body;
@@ -112,16 +135,14 @@ app.get("/admin", async (req, res) => {
   
   try {
     const streams = await collection.find().sort({ createdAt: 1 }).toArray();
-    const categoriasFijas = ["Cine", "Radio", "Infantiles", "Entretenimiento", "Deportes", "Pantalla Principal"];
-    const todasLasCategorias = [...new Set([...categoriasFijas, ...streams.map(s => s.category)])];
+    const categoriasFijas = ["Cine", "Radio", "Infantiles", "Entretenimiento", "Deportes"];
+    const todasLasCategorias = [...new Set([...categoriasFijas, ...streams.map(s => s.category)])]
+                                .filter(c => c !== "Pantalla Principal" && c !== "Otros");
 
-    const renderRowServer = (s) => `
-    <tr id="main-row-${s._id}">
+    const renderRowSimple = (s) => `
+    <tr id="row-${s._id}">
       <td width="30">${s.status === 'online' ? '🟢' : '🔴'}</td>
-      <td width="220">
-        <b>${s.name}</b><br/>
-        <span class="cat-badge">${s.category}</span>
-      </td>
+      <td width="220"><b>${s.name}</b><br/><span class="cat-badge">${s.category}</span></td>
       <td><input class="input-url" id="url-${s._id}" value="${s.url}"></td>
       <td width="100">
         <button class="btn-play" onclick="guardar('${s._id}')">💾</button>
@@ -147,8 +168,11 @@ app.get("/admin", async (req, res) => {
         textarea { width: 100%; background: #000; color: #0f0; border: 1px solid #444; padding: 10px; font-family: monospace; border-radius: 4px; resize: vertical; }
         .btn-danger-all { background: var(--danger); color: white; border: none; padding: 8px 15px; border-radius: 5px; cursor: pointer; font-weight: bold; margin-bottom: 15px; }
         table { width: 100%; border-collapse: collapse; }
-        td { padding: 10px; border-bottom: 1px solid #2a2a2a; position: relative; }
+        td { padding: 10px; border-bottom: 1px solid #2a2a2a; }
         .btn-play { background: #444; border: none; color: white; padding: 8px 15px; border-radius: 5px; cursor: pointer; }
+        .btn-top-add { background: none; border: 1px dashed #555; color: #888; width: 100%; padding: 4px; cursor: pointer; border-radius: 4px; margin-bottom: 5px; font-size: 11px; }
+        .btn-top-add:hover { border-color: var(--success); color: var(--success); }
+        .insert-box { display: none; background: #222; padding: 10px; border-left: 4px solid var(--success); margin: 5px 0; border-radius: 4px; }
         .input-url { width: 100%; background: #0a0a0a; border: 1px solid #333; color: #ccc; padding: 8px; border-radius: 4px; }
         .cat-badge { font-size: 10px; background: #333; padding: 2px 6px; border-radius: 10px; color: #aaa; }
       </style>
@@ -180,7 +204,7 @@ app.get("/admin", async (req, res) => {
 
       <div id="view-all" class="view-container active">
         <button class="btn-danger-all" onclick="borrarMasivo('all')">🗑 Borrar TODO</button>
-        <table id="all-table-body">${streams.map(s => renderRowServer(s)).join('')}</table>
+        <table>${streams.map(s => renderRowSimple(s)).join('')}</table>
       </div>
 
       <div id="view-categories" class="view-container">
@@ -195,7 +219,7 @@ app.get("/admin", async (req, res) => {
 
       <div id="view-main" class="view-container">
          <button class="btn-danger-all" onclick="borrarMasivo('main')">🗑 Limpiar Pantalla Principal</button>
-         <table id="main-table-body">${streams.filter(s => s.category === "Pantalla Principal").map(s => renderRowServer(s)).join('')}</table>
+         <table>${streams.filter(s => s.category === "Pantalla Principal").map(s => renderRowSimple(s)).join('')}</table>
       </div>
 
       <script>
@@ -211,21 +235,33 @@ app.get("/admin", async (req, res) => {
           document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
           document.getElementById('view-' + view).classList.add('active');
           btn.classList.add('active');
-          
-          // Ajuste automático de la categoría para carga masiva
           const bulkInput = document.getElementById('bulkCatInput');
-          if(view === 'main') {
-            bulkInput.value = 'Pantalla Principal';
-          } else if (view === 'all') {
-            bulkInput.value = '';
-          }
+          if(view === 'main') bulkInput.value = 'Pantalla Principal';
+          else if (view === 'all') bulkInput.value = '';
         }
 
-        function generarFilaHTML(s) {
+        window.showInsert = function(id) {
+          const box = document.getElementById('insert-' + id);
+          const isVisible = box.style.display === 'block';
+          document.querySelectorAll('.insert-box').forEach(b => b.style.display = 'none');
+          box.style.display = isVisible ? 'none' : 'block';
+        };
+
+        function generarFilaCategoriaHTML(s) {
           return \`
-            <tr id="main-row-\${s._id}">
+            <tr id="row-\${s._id}">
               <td width="30">\${s.status === 'online' ? '🟢' : '🔴'}</td>
               <td width="220">
+                <button class="btn-top-add" onclick="showInsert('\${s._id}')">➕ Agregar encima de \${s.name}</button>
+                <div id="insert-\${s._id}" class="insert-box">
+                   <form method="POST" action="/addSpecific?key=\${API_KEY}">
+                     <input name="name" placeholder="Nombre" style="width:90%; margin-bottom:5px;" required>
+                     <input name="url" placeholder="URL" style="width:90%; margin-bottom:5px;" required>
+                     <input type="hidden" name="category" value="\${s.category}">
+                     <input type="hidden" name="targetId" value="\${s._id}">
+                     <button class="nav-btn" style="background:var(--success); padding:5px 10px; font-size:12px;">Insertar ahora</button>
+                   </form>
+                </div>
                 <b>\${s.name}</b><br/>
                 <span class="cat-badge">\${s.category}</span>
               </td>
@@ -242,11 +278,8 @@ app.get("/admin", async (req, res) => {
           document.getElementById('btnDelCat').onclick = () => borrarMasivo('category', cat);
           document.getElementById('bulkCatInput').value = cat;
           const filtered = allStreams.filter(s => s.category === cat);
-          
           let html = "";
-          filtered.forEach(s => {
-            html += generarFilaHTML(s);
-          });
+          filtered.forEach(s => { html += generarFilaCategoriaHTML(s); });
           document.getElementById('cat-table-body').innerHTML = html;
         }
 
@@ -285,8 +318,7 @@ app.get("/admin", async (req, res) => {
     `;
     res.send(html);
   } catch (err) {
-    console.error(err);
-    res.status(500).send("Error interno en el panel");
+    res.status(500).send("Error interno");
   }
 });
 

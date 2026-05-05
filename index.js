@@ -55,10 +55,12 @@ async function checkStreams() {
 
 app.get("/streams", async (req, res) => {
   if (req.query.key !== API_KEY) return res.status(401).json([]);
+  // Ordenar siempre por createdAt para mantener la posición lógica
   const streams = await collection.find().sort({ createdAt: 1 }).toArray(); 
   res.json(streams);
 });
 
+// ESTA ES LA FUNCIÓN CRÍTICA PARA EL ORDEN "ENCIMA DE"
 app.post("/addSpecific", async (req, res) => {
   if (req.query.key !== API_KEY) return res.status(401).send("No autorizado");
   const { name, url, category, targetId } = req.body;
@@ -68,17 +70,26 @@ app.post("/addSpecific", async (req, res) => {
     try {
       const target = await collection.findOne({ _id: new ObjectId(targetId) });
       if (target) {
+        // Buscamos el elemento que está inmediatamente antes del actual en el tiempo
         const previous = await collection.find({ createdAt: { $lt: target.createdAt } })
                                          .sort({ createdAt: -1 }).limit(1).toArray();
         
-        const prevTime = previous.length > 0 ? previous[0].createdAt.getTime() : target.createdAt.getTime() - 1000;
         const targetTime = target.createdAt.getTime();
+        const prevTime = previous.length > 0 ? previous[0].createdAt.getTime() : targetTime - 10000;
+        
+        // Creamos una fecha JUSTO EN MEDIO de los dos
         newDate = new Date((prevTime + targetTime) / 2);
       }
-    } catch (e) { console.error("Error en addSpecific:", e); }
+    } catch (e) { console.error("Error en posicionamiento:", e); }
   }
 
-  await collection.insertOne({ name, url, category: category || "Otros", status: "unknown", createdAt: newDate });
+  await collection.insertOne({ 
+    name, 
+    url, 
+    category: category || "Otros", 
+    status: "unknown", 
+    createdAt: newDate 
+  });
   res.redirect(`/admin?key=${API_KEY}`);
 });
 

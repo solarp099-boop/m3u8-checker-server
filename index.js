@@ -14,11 +14,10 @@ const client = new MongoClient(uri);
 let collection;
 
 // --- CONFIGURACIÓN DE LOGOS ---
-// CAMBIA ESTO: Pon tu usuario y repositorio real de GitHub
 const GITHUB_LOGOS_BASE = "https://raw.githubusercontent.com/solarp099-boop/logos-tv/main/";
 
-// Función para generar la URL del logo automáticamente
 function generateLogoUrl(name) {
+  if (!name) return "";
   const cleanName = encodeURIComponent(name.trim());
   return `${GITHUB_LOGOS_BASE}${cleanName}.png`;
 }
@@ -32,7 +31,7 @@ async function conectarDB() {
   } catch (e) { console.error("❌ Error MongoDB:", e); }
 }
 
-// Checker de estado (Se mantiene intacto)
+// Checker de estado
 let checking = false;
 async function checkStreams() {
   if (checking || !collection) return;
@@ -61,8 +60,26 @@ async function checkStreams() {
   setInterval(checkStreams, 60000);
 })();
 
-// --- APIS ---
+// --- APIS CORREGIDAS ---
 
+// 1. ESTA RUTA ES PARA EL INICIO DE TU APP (MainActivity)
+// Solo muestra los canales que marcaste como "Pantalla Principal"
+app.get("/streams/main", async (req, res) => {
+  if (req.query.key !== API_KEY) return res.status(401).json([]);
+  const streams = await collection.find({ category: "Pantalla Principal" }).sort({ createdAt: 1 }).toArray(); 
+  res.json(streams);
+});
+
+// 2. ESTA RUTA ES PARA "TODOS LOS CANALES" (TodasLasSenalesActivity)
+// ¡AQUÍ ESTÁ EL TRUCO!: Quitamos el filtro para que envíe ABSOLUTAMENTE TODO (incluyendo los de Pantalla Principal)
+app.get("/streams/all", async (req, res) => {
+  if (req.query.key !== API_KEY) return res.status(401).json([]);
+  // Al dejar el find() vacío, enviamos todos los canales de la base de datos a tu app
+  const streams = await collection.find().sort({ createdAt: 1 }).toArray(); 
+  res.json(streams);
+});
+
+// Ruta por defecto (mantenida por seguridad)
 app.get("/streams", async (req, res) => {
   if (req.query.key !== API_KEY) return res.status(401).json([]);
   const streams = await collection.find().sort({ createdAt: 1 }).toArray(); 
@@ -71,9 +88,13 @@ app.get("/streams", async (req, res) => {
 
 app.post("/update", async (req, res) => {
   if (req.query.key !== API_KEY) return res.status(401).send("No autorizado");
-  const { id, url } = req.body;
-  // Nota: Aquí podrías actualizar el nombre también si lo necesitas
-  await collection.updateOne({ _id: new ObjectId(id) }, { $set: { url: url } });
+  const { id, url, name } = req.body;
+  const updateData = { url: url };
+  if (name) {
+    updateData.name = name;
+    updateData.logo = generateLogoUrl(name);
+  }
+  await collection.updateOne({ _id: new ObjectId(id) }, { $set: updateData });
   res.json({ ok: true });
 });
 
@@ -109,11 +130,11 @@ app.post("/addBulk", async (req, res) => {
   lines.forEach((line, index) => {
     const parts = line.split(",");
     if (parts.length >= 2) {
-      const name = parts[0].trim();
+      const channelName = parts[0].trim();
       toInsert.push({
-        name: name,
+        name: channelName,
         url: parts[1].trim(),
-        logo: generateLogoUrl(name), // NUEVO: Genera el link a GitHub automáticamente
+        logo: generateLogoUrl(channelName),
         category: finalCat || "Nacionales",
         status: "unknown",
         createdAt: new Date(baseTime + index)
@@ -124,7 +145,7 @@ app.post("/addBulk", async (req, res) => {
   res.redirect(`/admin?key=${API_KEY}`);
 });
 
-// --- PANEL ---
+// --- PANEL DE ADMINISTRACIÓN ---
 
 app.get("/admin", async (req, res) => {
   if (req.query.key !== API_KEY) return res.send("No autorizado");
@@ -139,9 +160,12 @@ app.get("/admin", async (req, res) => {
     <tr id="row-${s._id}">
       <td width="30">${s.status === 'online' ? '🟢' : '🔴'}</td>
       <td width="50">
-        <img src="${s.logo || ''}" onerror="this.src='https://cdn-icons-png.flaticon.com/512/3172/3172551.png'" style="width:40px;height:40px;border-radius:5px;object-fit:cover;background:#222;">
+        <img src="${s.logo || ''}" onerror="this.src='https://cdn-icons-png.flaticon.com/512/3172/3172551.png'" style="width:45px;height:45px;border-radius:8px;object-fit:contain;background:#000;border:1px solid #333;">
       </td>
-      <td width="180"><b>${s.name}</b><br/><span class="cat-badge">${s.category}</span></td>
+      <td width="180">
+        <input class="input-url" id="name-${s._id}" value="${s.name}" style="font-weight:bold;margin-bottom:4px;">
+        <br/><span class="cat-badge">${s.category}</span>
+      </td>
       <td><input class="input-url" id="url-${s._id}" value="${s.url}"></td>
       <td width="100">
         <button class="btn-play" onclick="guardar('${s._id}')">💾</button>
@@ -153,7 +177,7 @@ app.get("/admin", async (req, res) => {
     <!DOCTYPE html>
     <html>
     <head>
-      <title>IPTV Manager + Logos</title>
+      <title>IPTV Manager - Fix Dual View</title>
       <style>
         :root { --bg: #0f0f0f; --card: #1a1a1a; --primary: #3d5afe; --danger: #ff1744; --success: #28a745; --text: #ffffff; }
         body { font-family: 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); margin: 0; padding: 20px; }
@@ -165,18 +189,17 @@ app.get("/admin", async (req, res) => {
         .view-container.active { display: block; }
         .bulk-section { background: #222; padding: 15px; border-radius: 8px; margin-bottom: 20px; border-left: 4px solid var(--primary); }
         textarea { width: 100%; background: #000; color: #0f0; border: 1px solid #444; padding: 10px; font-family: monospace; border-radius: 4px; resize: vertical; }
-        .btn-danger-all { background: var(--danger); color: white; border: none; padding: 8px 15px; border-radius: 5px; cursor: pointer; font-weight: bold; margin-bottom: 15px; }
         table { width: 100%; border-collapse: collapse; }
         td { padding: 10px; border-bottom: 1px solid #2a2a2a; vertical-align: middle; }
         .btn-play { background: #444; border: none; color: white; padding: 8px 15px; border-radius: 5px; cursor: pointer; }
         .input-url { width: 100%; background: #0a0a0a; border: 1px solid #333; color: #ccc; padding: 8px; border-radius: 4px; }
         .cat-badge { font-size: 10px; background: #333; padding: 2px 6px; border-radius: 10px; color: #aaa; }
-        .cat-selector { background: #000; color: white; border: 1px solid #444; padding: 8px; flex: 1; border-radius: 4px; cursor: pointer; }
+        .btn-danger-all { background: var(--danger); color: white; border: none; padding: 8px 15px; border-radius: 5px; cursor: pointer; font-weight: bold; margin-bottom: 15px; }
+        .cat-selector { background: #000; color: white; border: 1px solid #444; padding: 8px; flex: 1; border-radius: 4px; }
         .cat-readonly { background: #111; color: #888; border: 1px solid #333; padding: 8px; flex: 1; border-radius: 4px; font-weight: bold; pointer-events: none; }
       </style>
     </head>
     <body>
-
       <div class="header">
         <div style="display:flex; align-items:center; gap:15px;">
           <h2 style="margin:0;">📺 IPTV Manager</h2>
@@ -190,9 +213,9 @@ app.get("/admin", async (req, res) => {
       </div>
 
       <div class="bulk-section">
-        <h4 style="margin:0 0 10px 0;">➕ Carga Masiva</h4>
+        <h4 style="margin:0 0 10px 0;">➕ Carga Masiva (Nombre, URL)</h4>
         <form method="POST" action="/addBulk?key=${API_KEY}">
-          <textarea name="list" rows="2" placeholder="Nombre, URL"></textarea>
+          <textarea name="list" rows="2" placeholder="Ej: Latina, http://url..."></textarea>
           <div style="margin-top:10px; display:flex; gap:10px;" id="cat-input-container"></div>
         </form>
       </div>
@@ -207,7 +230,7 @@ app.get("/admin", async (req, res) => {
            ${todasLasCategorias.map(cat => `<button class="nav-btn" style="font-size:11px; padding:6px 12px;" onclick="filterCat('${cat}')">${cat}</button>`).join('')}
          </div>
          <div id="cat-actions" style="display:none">
-            <button class="btn-danger-all" id="btnDelCat">🗑 Limpiar Canales de la Categoría</button>
+            <button class="btn-danger-all" id="btnDelCat">🗑 Limpiar Categoría</button>
             <table id="cat-table-body"></table>
          </div>
       </div>
@@ -224,24 +247,19 @@ app.get("/admin", async (req, res) => {
         const categoriasArray = ${JSON.stringify(todasLasCategorias)};
 
         function toggleRefresh() { autoRefresh = !autoRefresh; document.getElementById("btnAutoRefresh").innerText = autoRefresh ? "⏸ Pausar" : "▶ Reanudar"; }
-        setInterval(() => { if(autoRefresh) location.reload(); }, 45000);
+        setInterval(() => { if(autoRefresh) location.reload(); }, 60000);
 
         function updateCatInput(view, selectedCat = "") {
           const container = document.getElementById('cat-input-container');
           if (view === 'main') {
-            container.innerHTML = \`<input name="category" class="cat-readonly" value="PANTALLA PRINCIPAL" readonly> <button class="nav-btn" style="background:var(--success)">Agregar al final</button>\`;
+            container.innerHTML = \`<input name="category" class="cat-readonly" value="PANTALLA PRINCIPAL" readonly> <button class="nav-btn" style="background:var(--success)">Agregar</button>\`;
           } else if (view === 'all') {
-            container.innerHTML = \`<input name="category" class="cat-readonly" value="CANALES DE TODAS LAS SEÑALES" readonly> <button class="nav-btn" style="background:var(--success)">Agregar al final</button>\`;
+            container.innerHTML = \`<input name="category" class="cat-readonly" value="CANALES DE TODAS LAS SEÑALES" readonly> <button class="nav-btn" style="background:var(--success)">Agregar</button>\`;
           } else {
             let options = categoriasArray.map(c => \`<option value="\${c}" \${c === selectedCat ? 'selected' : ''}>\${c}</option>\`).join('');
-            container.innerHTML = \`
-              <select name="category" class="cat-selector" id="dynamicSelector">
-                \${options}
-              </select>
-              <button class="nav-btn" style="background:var(--success)">Agregar al final</button>\`;
+            container.innerHTML = \`<select name="category" class="cat-selector">\${options}</select><button class="nav-btn" style="background:var(--success)">Agregar</button>\`;
           }
         }
-
         updateCatInput('all');
 
         function showView(view, btn) {
@@ -261,9 +279,9 @@ app.get("/admin", async (req, res) => {
           filtered.forEach(s => {
             html += \`
             <tr id="row-\${s._id}">
-              <td width="30">\${s.status === 'online' ? '🟢' : '🔴'}</td>
-              <td width="50"><img src="\${s.logo || ''}" onerror="this.src='https://cdn-icons-png.flaticon.com/512/3172/3172551.png'" style="width:40px;height:40px;border-radius:5px;object-fit:cover;background:#222;"></td>
-              <td width="180"><b>\${s.name}</b><br/><span class="cat-badge">\${s.category}</span></td>
+              <td>\${s.status === 'online' ? '🟢' : '🔴'}</td>
+              <td><img src="\${s.logo || ''}" onerror="this.src='https://cdn-icons-png.flaticon.com/512/3172/3172551.png'" style="width:45px;height:45px;border-radius:8px;object-fit:contain;background:#000;"></td>
+              <td><input class="input-url" id="name-\${s._id}" value="\${s.name}"><br/><span class="cat-badge">\${s.category}</span></td>
               <td><input class="input-url" id="url-\${s._id}" value="\${s.url}"></td>
               <td>
                 <button class="btn-play" onclick="guardar('\${s._id}')">💾</button>
@@ -276,16 +294,17 @@ app.get("/admin", async (req, res) => {
 
         async function guardar(id) {
           const url = document.getElementById("url-" + id).value;
+          const name = document.getElementById("name-" + id).value;
           await fetch("/update?key=" + API_KEY, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ id, url })
+            body: JSON.stringify({ id, url, name })
           });
-          alert("Cambios guardados");
+          location.reload();
         }
 
         async function eliminar(id) {
-          if(!confirm("¿Eliminar este canal?")) return;
+          if(!confirm("¿Eliminar?")) return;
           await fetch("/deleteStream?key=" + API_KEY, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -295,8 +314,7 @@ app.get("/admin", async (req, res) => {
         }
 
         async function borrarMasivo(type, value = '') {
-          const msg = type === 'category' ? \`¿Borrar canales de "\${value}"?\` : "¿Borrar todo?";
-          if (!confirm(msg)) return;
+          if (!confirm("¿Seguro?")) return;
           await fetch("/deleteAll?key=" + API_KEY, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -313,4 +331,4 @@ app.get("/admin", async (req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log("🚀 Sistema IPTV con Logos y Auto-Checker"));
+app.listen(PORT, () => console.log("🚀 Servidor IPTV con Fix de Doble Vista"));

@@ -13,7 +13,6 @@ const uri = process.env.MONGO_URI;
 const client = new MongoClient(uri);
 let collection;
 
-// --- CONFIGURACIÓN DE LOGOS ---
 const GITHUB_LOGOS_BASE = "https://raw.githubusercontent.com/solarp099-boop/logos-tv/main/";
 
 function generateLogoUrl(name) {
@@ -31,45 +30,38 @@ async function conectarDB() {
   } catch (e) { console.error("❌ Error MongoDB:", e); }
 }
 
-// --- CHECKER MEJORADO (No más todo en rojo) ---
 let checking = false;
 async function checkStreams() {
   if (checking || !collection) return;
   checking = true;
   try {
     const streams = await collection.find().toArray();
-    for (const stream of streams) {
+    await Promise.all(streams.map(async (stream) => {
       let status = "offline";
       try {
-        // Intento 1: HEAD rápido
-        const resHead = await axios.head(stream.url, { timeout: 3000, headers: { "User-Agent": "Mozilla/5.0" } });
-        if (resHead.status >= 200 && resHead.status < 400) status = "online";
+        await axios.head(stream.url, { timeout: 5000, headers: { "User-Agent": "Mozilla/5.0" } });
+        status = "online";
       } catch {
         try {
-          // Intento 2: GET parcial (solo para validar que el servidor responde)
-          const resGet = await axios.get(stream.url, { timeout: 5000, headers: { "User-Agent": "Mozilla/5.0" }, validateStatus: () => true });
-          if (resGet.status === 200 || resGet.status === 206) status = "online";
+          const res = await axios.get(stream.url, { timeout: 8000, headers: { "User-Agent": "Mozilla/5.0" }, validateStatus: () => true });
+          if (res.status === 200) status = "online";
         } catch { status = "offline"; }
       }
-      // Solo actualizamos si el estado cambió para no saturar la DB
-      if (stream.status !== status) {
-        await collection.updateOne({ _id: stream._id }, { $set: { status } });
-      }
-    }
+      await collection.updateOne({ _id: stream._id }, { $set: { status } });
+    }));
   } catch (e) { console.error("Error en checker:", e); }
   checking = false;
 }
 
 (async () => {
   await conectarDB();
-  setInterval(checkStreams, 120000); // Aumentado a 2 min para dar respiro al servidor
+  setInterval(checkStreams, 60000);
 })();
 
-// --- APIS PARA TU APP ANDROID ---
+// --- APIS ---
 
 app.get("/streams/main", async (req, res) => {
   if (req.query.key !== API_KEY) return res.status(401).json([]);
-  // Buscamos exactamente la categoría "Pantalla Principal"
   const streams = await collection.find({ category: "Pantalla Principal" }).sort({ createdAt: 1 }).toArray(); 
   res.json(streams);
 });
@@ -87,7 +79,7 @@ app.get("/streams/category", async (req, res) => {
   res.json(streams);
 });
 
-// --- CRUD OPERACIONES ---
+// --- CRUD ---
 
 app.post("/update", async (req, res) => {
   if (req.query.key !== API_KEY) return res.status(401).send("No autorizado");
@@ -122,6 +114,7 @@ app.post("/deleteAll", async (req, res) => {
 app.post("/addBulk", async (req, res) => {
   if (req.query.key !== API_KEY) return res.status(401).send("No autorizado");
   const { list, category } = req.body;
+  
   if (!list || list.trim() === "") return res.redirect(`/admin?key=${API_KEY}`);
 
   let finalCat = category;
@@ -140,7 +133,7 @@ app.post("/addBulk", async (req, res) => {
         url: parts[1].trim(),
         logo: generateLogoUrl(channelName),
         category: finalCat, 
-        status: "online", // Por defecto online al agregar para evitar el rojo inicial
+        status: "unknown",
         createdAt: new Date(baseTime + index)
       });
     }
@@ -153,10 +146,12 @@ app.post("/addBulk", async (req, res) => {
 
 app.get("/admin", async (req, res) => {
   if (req.query.key !== API_KEY) return res.send("No autorizado");
+  
   try {
     const streams = await collection.find().sort({ createdAt: 1 }).toArray();
     const categoriasFijas = ["Cine", "Radio", "Infantiles", "Entretenimiento", "Deportes", "Nacionales"];
 
+    // AQUÍ SE AGREGA EL BOTÓN DE PLAY/PAUSA RESTAURADO
     const renderRowSimple = (s) => `
     <tr id="row-${s._id}">
       <td width="30">${s.status === 'online' ? '🟢' : '🔴'}</td>
@@ -168,7 +163,8 @@ app.get("/admin", async (req, res) => {
         <br/><span class="cat-badge">${s.category}</span>
       </td>
       <td><input class="input-url" id="url-${s._id}" value="${s.url}"></td>
-      <td width="100">
+      <td width="120">
+        <button class="btn-play" onclick="window.open('${s.url}', '_blank')">▶️</button>
         <button class="btn-play" onclick="guardar('${s._id}')">💾</button>
         <button class="btn-play" style="background:var(--danger)" onclick="eliminar('${s._id}')">❌</button>
       </td>
@@ -178,7 +174,7 @@ app.get("/admin", async (req, res) => {
     <!DOCTYPE html>
     <html>
     <head>
-      <title>IPTV Manager - Sistema Corregido</title>
+      <title>IPTV Manager</title>
       <style>
         :root { --bg: #0f0f0f; --card: #1a1a1a; --primary: #3d5afe; --danger: #ff1744; --success: #28a745; --text: #ffffff; }
         body { font-family: 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); margin: 0; padding: 20px; }
@@ -192,7 +188,7 @@ app.get("/admin", async (req, res) => {
         textarea { width: 100%; background: #000; color: #0f0; border: 1px solid #444; padding: 10px; font-family: monospace; border-radius: 4px; }
         table { width: 100%; border-collapse: collapse; }
         td { padding: 10px; border-bottom: 1px solid #2a2a2a; }
-        .btn-play { background: #444; border: none; color: white; padding: 8px 15px; border-radius: 5px; cursor: pointer; }
+        .btn-play { background: #444; border: none; color: white; padding: 8px 12px; border-radius: 5px; cursor: pointer; margin-right: 2px; }
         .input-url { width: 100%; background: #0a0a0a; border: 1px solid #333; color: #ccc; padding: 8px; border-radius: 4px; }
         .cat-badge { font-size: 10px; background: #333; padding: 2px 6px; border-radius: 10px; color: #aaa; }
         .btn-danger-all { background: var(--danger); color: white; border: none; padding: 8px 15px; border-radius: 5px; cursor: pointer; font-weight: bold; margin-bottom: 15px; }
@@ -258,7 +254,7 @@ app.get("/admin", async (req, res) => {
           } else {
             if (!selectedCat) {
               bulkCard.classList.add('hidden-bulk');
-              container.innerHTML = '<p style="color:#888; font-size:12px;">Selecciona una categoría abajo.</p>';
+              container.innerHTML = '<p style="color:#888; font-size:12px;">Selecciona una sub-categoría abajo.</p>';
             } else {
               bulkCard.classList.remove('hidden-bulk');
               let options = categoriasArray.map(c => \`<option value="\${c}" \${c === selectedCat ? 'selected' : ''}>\${c}</option>\`).join('');
@@ -289,7 +285,10 @@ app.get("/admin", async (req, res) => {
               <td><img src="\${s.logo}" style="width:40px;height:40px;object-fit:contain;background:#000;border-radius:5px;"></td>
               <td><input class="input-url" id="name-\${s._id}" value="\${s.name}"></td>
               <td><input class="input-url" id="url-\${s._id}" value="\${s.url}"></td>
-              <td><button class="btn-play" onclick="guardar('\${s._id}')">💾</button></td>
+              <td>
+                <button class="btn-play" onclick="window.open('\${s.url}', '_blank')">▶️</button>
+                <button class="btn-play" onclick="guardar('\${s._id}')">💾</button>
+              </td>
             </tr>\`).join('');
         }
 
@@ -332,4 +331,4 @@ app.get("/admin", async (req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log("🚀 Sistema Corregido Online"));
+app.listen(PORT, () => console.log("🚀 Panel con Play/Pausa Online"));

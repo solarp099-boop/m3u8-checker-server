@@ -93,10 +93,14 @@ app.get("/streams/category", async (req, res) => {
 
 app.post("/insertAt", async (req, res) => {
   if (req.query.key !== API_KEY) return res.status(401).send("No autorizado");
-  const { targetId, name, url } = req.body;
+  const { targetId, name, url, category } = req.body;
+  
   const targetStream = await collection.findOne({ _id: new ObjectId(targetId) });
   if (!targetStream) return res.status(404).send("Referencia no encontrada");
+
+  // Insertamos con un tiempo ligeramente menor para que aparezca arriba al ordenar
   const newTime = new Date(new Date(targetStream.createdAt).getTime() - 1);
+
   await collection.insertOne({
     name,
     url,
@@ -215,7 +219,7 @@ app.get("/admin", async (req, res) => {
         .view-container { display: none; background: var(--card); padding: 20px; border-radius: 12px; }
         .view-container.active { display: block; }
         .bulk-section { background: #222; padding: 15px; border-radius: 8px; margin-bottom: 20px; border-left: 4px solid var(--primary); }
-        textarea { width: 100%; background: #000; color: #0f0; border: 1px solid #444; padding: 10px; font-family: monospace; border-radius: 4px; resize: vertical; }
+        textarea { width: 100%; background: #000; color: #0f0; border: 1px solid #444; padding: 10px; font-family: monospace; border-radius: 4px; }
         table { width: 100%; border-collapse: collapse; }
         td { padding: 10px; border-bottom: 1px solid #2a2a2a; }
         .btn-play { background: #444; border: none; color: white; padding: 8px 15px; border-radius: 5px; cursor: pointer; }
@@ -229,7 +233,6 @@ app.get("/admin", async (req, res) => {
         .btn-add-here { width: 100%; background: transparent; border: none; color: #ffeb3b; font-size: 20px; cursor: pointer; padding: 5px; transition: 0.3s; }
         .btn-add-here:hover { background: rgba(255, 235, 59, 0.1); }
         .add-row td { border: none !important; padding: 0 !important; text-align: center; }
-        .hidden-bulk { display: none; }
       </style>
     </head>
     <body>
@@ -248,7 +251,7 @@ app.get("/admin", async (req, res) => {
       <div class="bulk-section" id="bulk-card">
         <h4 style="margin:0 0 10px 0;">➕ Carga Masiva</h4>
         <form method="POST" action="/addBulk?key=${API_KEY}" id="bulkForm">
-          <textarea name="list" id="bulkTextarea" rows="2" placeholder="Nombre, URL (Ejemplo: Studio 92, http://url...)"></textarea>
+          <textarea name="list" id="bulkTextarea" rows="2" placeholder="Nombre, URL"></textarea>
           <div style="margin-top:10px; display:flex; gap:10px;" id="cat-input-container"></div>
         </form>
       </div>
@@ -318,11 +321,6 @@ app.get("/admin", async (req, res) => {
         function updateCatInput(view, selectedCat = "") {
           const container = document.getElementById('cat-input-container');
           const bulkCard = document.getElementById('bulk-card');
-          const textarea = document.getElementById('bulkTextarea');
-          
-          // Limpiar el textarea al cambiar de sección para evitar duplicados visuales
-          textarea.value = "";
-
           if (view === 'main') {
             bulkCard.classList.remove('hidden-bulk');
             container.innerHTML = \`<input name="category" class="cat-readonly" value="PANTALLA PRINCIPAL" readonly> <button class="nav-btn" style="background:var(--success)">Agregar</button>\`;
@@ -332,6 +330,7 @@ app.get("/admin", async (req, res) => {
           } else {
             if (!selectedCat) {
               bulkCard.classList.add('hidden-bulk');
+              container.innerHTML = '<p style="color:#888;">Elige una categoría.</p>';
             } else {
               bulkCard.classList.remove('hidden-bulk');
               let options = categoriasArray.map(c => \`<option value="\${c}" \${c === selectedCat ? 'selected' : ''}>\${c}</option>\`).join('');
@@ -364,7 +363,7 @@ app.get("/admin", async (req, res) => {
             
             return \`
             <tr class="add-row"><td colspan="5" style="padding:0;"><button class="btn-add-here" onclick="insertarAqui('\${s._id}')">+</button></td></tr>
-            <tr id="row-\${s._id}">
+            <tr>
               <td>\${icon}</td>
               <td><img src="\${s.logo}" style="width:40px;height:40px;object-fit:contain;background:#000;border-radius:5px;"></td>
               <td><input class="input-url" id="name-\${s._id}" value="\${s.name}"></td>

@@ -36,13 +36,10 @@ async function checkStreams() {
   checking = true;
   try {
     const streams = await collection.find().toArray();
-    
-    // 🚀 MEJORA: Verificación en PARALELO para máxima velocidad
     await Promise.all(streams.map(async (stream) => {
       let status = "offline";
       try {
-        // Timeout ultra rápido de 2.5s para no bloquear el panel
-        const res = await axios.head(stream.url, { 
+        await axios.head(stream.url, { 
           timeout: 2500, 
           headers: { "User-Agent": "Mozilla/5.0" },
           validateStatus: (s) => s < 400 
@@ -50,7 +47,7 @@ async function checkStreams() {
         status = "online";
       } catch {
         try {
-          const resGet = await axios.get(stream.url, { 
+          await axios.get(stream.url, { 
             timeout: 3000, 
             headers: { "User-Agent": "Mozilla/5.0" }, 
             validateStatus: (s) => s === 200 || s === 206 
@@ -58,7 +55,6 @@ async function checkStreams() {
           status = "online";
         } catch { status = "offline"; }
       }
-
       if (stream.status !== status) {
         await collection.updateOne({ _id: stream._id }, { $set: { status } });
       }
@@ -69,11 +65,10 @@ async function checkStreams() {
 
 (async () => {
   await conectarDB();
-  // 🚀 MEJORA: Chequeo cada 15 segundos en lugar de cada minuto
   setInterval(checkStreams, 15000); 
 })();
 
-// --- ENDPOINTS PARA LA APP ---
+// --- ENDPOINTS ---
 
 app.get("/streams/main", async (req, res) => {
   if (req.query.key !== API_KEY) return res.status(401).json([]);
@@ -96,6 +91,27 @@ app.get("/streams/category", async (req, res) => {
 
 // --- OPERACIONES CRUD ---
 
+app.post("/insertAt", async (req, res) => {
+  if (req.query.key !== API_KEY) return res.status(401).send("No autorizado");
+  const { targetId, name, url, category } = req.body;
+  
+  const targetStream = await collection.findOne({ _id: new ObjectId(targetId) });
+  if (!targetStream) return res.status(404).send("Referencia no encontrada");
+
+  // Insertamos con un tiempo ligeramente menor para que aparezca arriba al ordenar
+  const newTime = new Date(new Date(targetStream.createdAt).getTime() - 1);
+
+  await collection.insertOne({
+    name,
+    url,
+    logo: generateLogoUrl(name),
+    category: targetStream.category,
+    status: "pending",
+    createdAt: newTime
+  });
+  res.json({ ok: true });
+});
+
 app.post("/update", async (req, res) => {
   if (req.query.key !== API_KEY) return res.status(401).send("No autorizado");
   const { id, url, name } = req.body;
@@ -105,7 +121,6 @@ app.post("/update", async (req, res) => {
     updateData.logo = generateLogoUrl(name);
   }
   await collection.updateOne({ _id: new ObjectId(id) }, { $set: updateData });
-  checkStreams(); 
   res.json({ ok: true });
 });
 
@@ -153,10 +168,7 @@ app.post("/addBulk", async (req, res) => {
       });
     }
   });
-  if (toInsert.length > 0) {
-    await collection.insertMany(toInsert);
-    checkStreams(); 
-  }
+  if (toInsert.length > 0) await collection.insertMany(toInsert);
   res.redirect(`/admin?key=${API_KEY}`);
 });
 
@@ -175,6 +187,7 @@ app.get("/admin", async (req, res) => {
     };
 
     const renderRowSimple = (s) => `
+    <tr class="add-row"><td colspan="5" style="padding:0;"><button class="btn-add-here" onclick="insertarAqui('${s._id}')">+</button></td></tr>
     <tr id="row-${s._id}">
       <td width="30">${getStatusIcon(s.status)}</td>
       <td width="50">
@@ -217,6 +230,9 @@ app.get("/admin", async (req, res) => {
         .cat-selector { background: #000; color: white; border: 1px solid #444; padding: 10px; flex: 1; border-radius: 4px; }
         .btn-toggle { background: #444; border: 1px solid #666; color: white; padding: 10px 20px; border-radius: 8px; cursor: pointer; font-weight: bold; }
         .btn-toggle.active { background: var(--success); border-color: #5ff55; }
+        .btn-add-here { width: 100%; background: transparent; border: none; color: #ffeb3b; font-size: 20px; cursor: pointer; padding: 5px; transition: 0.3s; }
+        .btn-add-here:hover { background: rgba(255, 235, 59, 0.1); }
+        .add-row td { border: none !important; padding: 0 !important; text-align: center; }
       </style>
     </head>
     <body>
@@ -285,9 +301,22 @@ app.get("/admin", async (req, res) => {
           if (autoRefresh) location.reload();
         }
 
-        // 🚀 MEJORA: Recarga visual del panel cada 15 segundos si está activo
         if (autoRefresh) { setTimeout(() => { location.reload(); }, 15000); }
         updateToggleUI();
+
+        async function insertarAqui(targetId) {
+          const name = prompt("Nombre del nuevo canal:");
+          if (!name) return;
+          const url = prompt("URL del canal (m3u8):");
+          if (!url) return;
+
+          await fetch("/insertAt?key=" + API_KEY, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ targetId, name, url })
+          });
+          location.reload();
+        }
 
         function updateCatInput(view, selectedCat = "") {
           const container = document.getElementById('cat-input-container');
@@ -333,6 +362,7 @@ app.get("/admin", async (req, res) => {
             if(s.status === 'offline') icon = '🔴';
             
             return \`
+            <tr class="add-row"><td colspan="5" style="padding:0;"><button class="btn-add-here" onclick="insertarAqui('\${s._id}')">+</button></td></tr>
             <tr>
               <td>\${icon}</td>
               <td><img src="\${s.logo}" style="width:40px;height:40px;object-fit:contain;background:#000;border-radius:5px;"></td>
@@ -385,4 +415,4 @@ app.get("/admin", async (req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log("🚀 Sistema de Detección Veloz Online"));
+app.listen(PORT, () => console.log("🚀 Sistema Blindado Online"));

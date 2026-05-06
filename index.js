@@ -36,32 +36,39 @@ async function checkStreams() {
   checking = true;
   try {
     const streams = await collection.find().toArray();
-    for (const stream of streams) {
+    // Usamos Promise.all para verificar muchos canales en paralelo y ganar velocidad
+    await Promise.all(streams.map(async (stream) => {
       let status = "offline";
       try {
-        // Timeout reducido a 3s para mayor rapidez en el bucle
-        const res = await axios.head(stream.url, { timeout: 3000, headers: { "User-Agent": "Mozilla/5.0" } });
-        if (res.status >= 200 && res.status < 400) status = "online";
-      } catch {
-        try {
-          const resGet = await axios.get(stream.url, { timeout: 4000, headers: { "User-Agent": "Mozilla/5.0" }, validateStatus: () => true });
-          if (resGet.status === 200 || resGet.status === 206) status = "online";
-        } catch { status = "offline"; }
-      }
+        const res = await axios.get(stream.url, { 
+          timeout: 5000, 
+          headers: { "User-Agent": "Mozilla/5.0" },
+          validateStatus: () => true 
+        });
+        if (res.status === 200 || res.status === 206) status = "online";
+      } catch { status = "offline"; }
+
       if (stream.status !== status) {
         await collection.updateOne({ _id: stream._id }, { $set: { status } });
       }
-    }
+    }));
   } catch (e) { console.error("Error en checker:", e); }
   checking = false;
 }
 
 (async () => {
   await conectarDB();
-  setInterval(checkStreams, 60000); // Reducido a 1 minuto para mayor frecuencia
+  setInterval(checkStreams, 60000); // Revisión automática cada minuto
 })();
 
-// --- ENDPOINTS PARA LA APP ---
+// --- ENDPOINTS ---
+
+// NUEVO: Este endpoint fuerza la revisión cuando el panel se refresca
+app.get("/check-now", async (req, res) => {
+  if (req.query.key !== API_KEY) return res.status(401).send("No");
+  checkStreams(); // Lanza el proceso en segundo plano
+  res.json({ ok: true });
+});
 
 app.get("/streams/main", async (req, res) => {
   if (req.query.key !== API_KEY) return res.status(401).json([]);
@@ -82,18 +89,17 @@ app.get("/streams/category", async (req, res) => {
   res.json(streams);
 });
 
-// --- OPERACIONES CRUD ---
-
 app.post("/update", async (req, res) => {
   if (req.query.key !== API_KEY) return res.status(401).send("No autorizado");
   const { id, url, name } = req.body;
-  const updateData = { url: url, status: "pending" }; // Al editar, vuelve a gris para re-verificar
+  // Al actualizar, forzamos estado 'pending' (gris) para indicar que se está revisando el nuevo link
+  const updateData = { url: url, status: "pending" };
   if (name) {
     updateData.name = name;
     updateData.logo = generateLogoUrl(name);
   }
   await collection.updateOne({ _id: new ObjectId(id) }, { $set: updateData });
-  checkStreams(); // Dispara verificación inmediata
+  checkStreams(); // Iniciar revisión inmediata del cambio
   res.json({ ok: true });
 });
 
@@ -136,14 +142,14 @@ app.post("/addBulk", async (req, res) => {
         url: parts[1].trim(),
         logo: generateLogoUrl(channelName),
         category: finalCat, 
-        status: "pending", // 🟢 CAMBIO: Ahora aparecen en gris (pending)
+        status: "pending", 
         createdAt: new Date(baseTime + index)
       });
     }
   });
   if (toInsert.length > 0) {
     await collection.insertMany(toInsert);
-    checkStreams(); // 🚀 CAMBIO: Verifica apenas se agregan
+    checkStreams(); 
   }
   res.redirect(`/admin?key=${API_KEY}`);
 });
@@ -156,11 +162,10 @@ app.get("/admin", async (req, res) => {
     const streams = await collection.find().sort({ createdAt: 1 }).toArray();
     const categoriasFijas = ["Cine", "Radio", "Infantiles", "Entretenimiento", "Deportes", "Nacionales"];
 
-    // Función para definir color del punto
     const getStatusIcon = (status) => {
         if (status === 'online') return '🟢';
         if (status === 'offline') return '🔴';
-        return '⚫'; // Gris/Oscuro para 'pending'
+        return '⚫'; 
     };
 
     const renderRowSimple = (s) => `
@@ -267,14 +272,24 @@ app.get("/admin", async (req, res) => {
           }
         }
 
-        function toggleAutoRefresh() {
+        async function toggleAutoRefresh() {
           autoRefresh = !autoRefresh;
           localStorage.setItem("iptv_refresh", autoRefresh);
           updateToggleUI();
-          if (autoRefresh) location.reload();
+          if (autoRefresh) {
+            // Al encenderlo, forzamos una revisión inmediata en el servidor
+            await fetch("/check-now?key=" + API_KEY);
+            location.reload();
+          }
         }
 
-        if (autoRefresh) { setTimeout(() => { location.reload(); }, 30000); }
+        if (autoRefresh) { 
+            setTimeout(async () => { 
+                // Cada vez que se va a refrescar, le avisamos al servidor que revise
+                await fetch("/check-now?key=" + API_KEY);
+                location.reload(); 
+            }, 30000); 
+        }
         updateToggleUI();
 
         function updateCatInput(view, selectedCat = "") {
@@ -342,6 +357,8 @@ app.get("/admin", async (req, res) => {
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ id, url, name })
           });
+          // Después de guardar, le pedimos al servidor revisar el cambio de inmediato
+          await fetch("/check-now?key=" + API_KEY);
           location.reload();
         }
 

@@ -36,39 +36,44 @@ async function checkStreams() {
   checking = true;
   try {
     const streams = await collection.find().toArray();
-    // Usamos Promise.all para verificar muchos canales en paralelo y ganar velocidad
+    
+    // 🚀 MEJORA: Verificación en PARALELO para máxima velocidad
     await Promise.all(streams.map(async (stream) => {
       let status = "offline";
       try {
-        const res = await axios.get(stream.url, { 
-          timeout: 5000, 
+        // Timeout ultra rápido de 2.5s para no bloquear el panel
+        const res = await axios.head(stream.url, { 
+          timeout: 2500, 
           headers: { "User-Agent": "Mozilla/5.0" },
-          validateStatus: () => true 
+          validateStatus: (s) => s < 400 
         });
-        if (res.status === 200 || res.status === 206) status = "online";
-      } catch { status = "offline"; }
+        status = "online";
+      } catch {
+        try {
+          const resGet = await axios.get(stream.url, { 
+            timeout: 3000, 
+            headers: { "User-Agent": "Mozilla/5.0" }, 
+            validateStatus: (s) => s === 200 || s === 206 
+          });
+          status = "online";
+        } catch { status = "offline"; }
+      }
 
       if (stream.status !== status) {
         await collection.updateOne({ _id: stream._id }, { $set: { status } });
       }
     }));
-  } catch (e) { console.error("Error en checker:", e); }
+  } catch (e) { console.error("Error en checker veloz:", e); }
   checking = false;
 }
 
 (async () => {
   await conectarDB();
-  setInterval(checkStreams, 60000); // Revisión automática cada minuto
+  // 🚀 MEJORA: Chequeo cada 15 segundos en lugar de cada minuto
+  setInterval(checkStreams, 15000); 
 })();
 
-// --- ENDPOINTS ---
-
-// NUEVO: Este endpoint fuerza la revisión cuando el panel se refresca
-app.get("/check-now", async (req, res) => {
-  if (req.query.key !== API_KEY) return res.status(401).send("No");
-  checkStreams(); // Lanza el proceso en segundo plano
-  res.json({ ok: true });
-});
+// --- ENDPOINTS PARA LA APP ---
 
 app.get("/streams/main", async (req, res) => {
   if (req.query.key !== API_KEY) return res.status(401).json([]);
@@ -89,17 +94,18 @@ app.get("/streams/category", async (req, res) => {
   res.json(streams);
 });
 
+// --- OPERACIONES CRUD ---
+
 app.post("/update", async (req, res) => {
   if (req.query.key !== API_KEY) return res.status(401).send("No autorizado");
   const { id, url, name } = req.body;
-  // Al actualizar, forzamos estado 'pending' (gris) para indicar que se está revisando el nuevo link
-  const updateData = { url: url, status: "pending" };
+  const updateData = { url: url, status: "pending" }; 
   if (name) {
     updateData.name = name;
     updateData.logo = generateLogoUrl(name);
   }
   await collection.updateOne({ _id: new ObjectId(id) }, { $set: updateData });
-  checkStreams(); // Iniciar revisión inmediata del cambio
+  checkStreams(); 
   res.json({ ok: true });
 });
 
@@ -272,24 +278,15 @@ app.get("/admin", async (req, res) => {
           }
         }
 
-        async function toggleAutoRefresh() {
+        function toggleAutoRefresh() {
           autoRefresh = !autoRefresh;
           localStorage.setItem("iptv_refresh", autoRefresh);
           updateToggleUI();
-          if (autoRefresh) {
-            // Al encenderlo, forzamos una revisión inmediata en el servidor
-            await fetch("/check-now?key=" + API_KEY);
-            location.reload();
-          }
+          if (autoRefresh) location.reload();
         }
 
-        if (autoRefresh) { 
-            setTimeout(async () => { 
-                // Cada vez que se va a refrescar, le avisamos al servidor que revise
-                await fetch("/check-now?key=" + API_KEY);
-                location.reload(); 
-            }, 30000); 
-        }
+        // 🚀 MEJORA: Recarga visual del panel cada 15 segundos si está activo
+        if (autoRefresh) { setTimeout(() => { location.reload(); }, 15000); }
         updateToggleUI();
 
         function updateCatInput(view, selectedCat = "") {
@@ -357,8 +354,6 @@ app.get("/admin", async (req, res) => {
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ id, url, name })
           });
-          // Después de guardar, le pedimos al servidor revisar el cambio de inmediato
-          await fetch("/check-now?key=" + API_KEY);
           location.reload();
         }
 
@@ -390,4 +385,4 @@ app.get("/admin", async (req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log("🚀 Sistema de Vinculación Total Online"));
+app.listen(PORT, () => console.log("🚀 Sistema de Detección Veloz Online"));

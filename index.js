@@ -37,35 +37,41 @@ async function checkStreams() {
   checking = true;
   try {
     const streams = await collection.find().toArray();
-    await Promise.all(streams.map(async (stream) => {
+    for (const stream of streams) {
       let status = "offline";
       try {
-        await axios.head(stream.url, { timeout: 5000, headers: { "User-Agent": "Mozilla/5.0" } });
-        status = "online";
+        const res = await axios.head(stream.url, { timeout: 4000, headers: { "User-Agent": "Mozilla/5.0" } });
+        if (res.status >= 200 && res.status < 400) status = "online";
       } catch {
         try {
-          const res = await axios.get(stream.url, { timeout: 8000, headers: { "User-Agent": "Mozilla/5.0" }, validateStatus: () => true });
-          if (res.status === 200) status = "online";
+          const resGet = await axios.get(stream.url, { timeout: 6000, headers: { "User-Agent": "Mozilla/5.0" }, validateStatus: () => true });
+          if (resGet.status === 200 || resGet.status === 206) status = "online";
         } catch { status = "offline"; }
       }
-      await collection.updateOne({ _id: stream._id }, { $set: { status } });
-    }));
+      if (stream.status !== status) {
+        await collection.updateOne({ _id: stream._id }, { $set: { status } });
+      }
+    }
   } catch (e) { console.error("Error en checker:", e); }
   checking = false;
 }
 
 (async () => {
   await conectarDB();
-  setInterval(checkStreams, 60000);
+  setInterval(checkStreams, 120000);
 })();
 
-// --- APIS ---
+// --- VINCULACIÓN CORREGIDA PARA ANDROID STUDIO ---
+
+// Este endpoint es el que usa tu MainActivity.kt
 app.get("/streams/main", async (req, res) => {
   if (req.query.key !== API_KEY) return res.status(401).json([]);
+  // Forzamos la búsqueda exacta para que coincida con lo guardado en el panel
   const streams = await collection.find({ category: "Pantalla Principal" }).sort({ createdAt: 1 }).toArray(); 
   res.json(streams);
 });
 
+// Este endpoint es el que usa tu TodasLasSeñalesActivity.kt
 app.get("/streams/all", async (req, res) => {
   if (req.query.key !== API_KEY) return res.status(401).json([]);
   const streams = await collection.find({ category: "Todas las Señales" }).sort({ createdAt: 1 }).toArray(); 
@@ -79,7 +85,8 @@ app.get("/streams/category", async (req, res) => {
   res.json(streams);
 });
 
-// --- CRUD ---
+// --- OPERACIONES CRUD ---
+
 app.post("/update", async (req, res) => {
   if (req.query.key !== API_KEY) return res.status(401).send("No autorizado");
   const { id, url, name } = req.body;
@@ -115,6 +122,7 @@ app.post("/addBulk", async (req, res) => {
   const { list, category } = req.body;
   if (!list || list.trim() === "") return res.redirect(`/admin?key=${API_KEY}`);
 
+  // Normalización crítica para que la App Avanzada vea los datos
   let finalCat = category;
   if (category === "CANALES DE TODAS LAS SEÑALES") finalCat = "Todas las Señales";
   if (category === "PANTALLA PRINCIPAL") finalCat = "Pantalla Principal";
@@ -131,7 +139,7 @@ app.post("/addBulk", async (req, res) => {
         url: parts[1].trim(),
         logo: generateLogoUrl(channelName),
         category: finalCat, 
-        status: "unknown",
+        status: "online", 
         createdAt: new Date(baseTime + index)
       });
     }
@@ -140,7 +148,8 @@ app.post("/addBulk", async (req, res) => {
   res.redirect(`/admin?key=${API_KEY}`);
 });
 
-// --- PANEL ADMIN ---
+// --- PANEL ADMIN CON BOTONES ---
+
 app.get("/admin", async (req, res) => {
   if (req.query.key !== API_KEY) return res.send("No autorizado");
   try {
@@ -185,12 +194,11 @@ app.get("/admin", async (req, res) => {
         .btn-play { background: #444; border: none; color: white; padding: 8px 15px; border-radius: 5px; cursor: pointer; }
         .input-url { width: 100%; background: #0a0a0a; border: 1px solid #333; color: #ccc; padding: 8px; border-radius: 4px; }
         .cat-badge { font-size: 10px; background: #333; padding: 2px 6px; border-radius: 10px; color: #aaa; }
-        .btn-danger-all { background: var(--danger); color: white; border: none; padding: 8px 15px; border-radius: 5px; cursor: pointer; font-weight: bold; margin-bottom: 15 tax; }
+        .btn-danger-all { background: var(--danger); color: white; border: none; padding: 8px 15px; border-radius: 5px; cursor: pointer; font-weight: bold; margin-bottom: 15px; }
         .cat-readonly { background: #111; color: var(--primary); border: 1px solid #333; padding: 10px; flex: 1; border-radius: 4px; font-weight: bold; pointer-events: none; }
         .cat-selector { background: #000; color: white; border: 1px solid #444; padding: 10px; flex: 1; border-radius: 4px; }
-        .hidden-bulk { opacity: 0.5; pointer-events: none; filter: grayscale(1); }
-        .btn-toggle { background: #444; border: 1px solid #666; color: white; padding: 10px 20px; border-radius: 8px; cursor: pointer; font-weight: bold; font-size: 14px; }
-        .btn-toggle.active { background: var(--success); border-color: #55ff55; }
+        .btn-toggle { background: #444; border: 1px solid #666; color: white; padding: 10px 20px; border-radius: 8px; cursor: pointer; font-weight: bold; }
+        .btn-toggle.active { background: var(--success); border-color: #5ff55; }
       </style>
     </head>
     <body>
@@ -239,7 +247,6 @@ app.get("/admin", async (req, res) => {
         const allStreams = ${JSON.stringify(streams)};
         const categoriasArray = ${JSON.stringify(categoriasFijas)};
 
-        // --- LÓGICA DE AUTO-REFRESH RESTAURADA ---
         let autoRefresh = localStorage.getItem("iptv_refresh") === "true";
         const toggleBtn = document.getElementById("toggleBtn");
 
@@ -260,16 +267,12 @@ app.get("/admin", async (req, res) => {
           if (autoRefresh) location.reload();
         }
 
-        if (autoRefresh) {
-          setTimeout(() => { location.reload(); }, 30000); // Recarga cada 30 segundos si está ON
-        }
+        if (autoRefresh) { setTimeout(() => { location.reload(); }, 30000); }
         updateToggleUI();
 
         function updateCatInput(view, selectedCat = "") {
           const container = document.getElementById('cat-input-container');
           const bulkCard = document.getElementById('bulk-card');
-          document.getElementById('bulkTextarea').value = ""; 
-
           if (view === 'main') {
             bulkCard.classList.remove('hidden-bulk');
             container.innerHTML = \`<input name="category" class="cat-readonly" value="PANTALLA PRINCIPAL" readonly> <button class="nav-btn" style="background:var(--success)">Agregar</button>\`;
@@ -279,7 +282,7 @@ app.get("/admin", async (req, res) => {
           } else {
             if (!selectedCat) {
               bulkCard.classList.add('hidden-bulk');
-              container.innerHTML = '<p style="color:#888; font-size:12px;">Selecciona una categoría abajo.</p>';
+              container.innerHTML = '<p style="color:#888;">Elige una categoría.</p>';
             } else {
               bulkCard.classList.remove('hidden-bulk');
               let options = categoriasArray.map(c => \`<option value="\${c}" \${c === selectedCat ? 'selected' : ''}>\${c}</option>\`).join('');
@@ -353,4 +356,4 @@ app.get("/admin", async (req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log("🚀 Panel con Auto-Refresh Online"));
+app.listen(PORT, () => console.log("🚀 Sistema de Vinculación Total Online"));

@@ -13,6 +13,7 @@ const uri = process.env.MONGO_URI;
 const client = new MongoClient(uri);
 let collection;
 
+// --- CONFIGURACIÓN DE LOGOS ---
 const GITHUB_LOGOS_BASE = "https://raw.githubusercontent.com/solarp099-boop/logos-tv/main/";
 
 function generateLogoUrl(name) {
@@ -59,7 +60,6 @@ async function checkStreams() {
 })();
 
 // --- APIS ---
-
 app.get("/streams/main", async (req, res) => {
   if (req.query.key !== API_KEY) return res.status(401).json([]);
   const streams = await collection.find({ category: "Pantalla Principal" }).sort({ createdAt: 1 }).toArray(); 
@@ -80,7 +80,6 @@ app.get("/streams/category", async (req, res) => {
 });
 
 // --- CRUD ---
-
 app.post("/update", async (req, res) => {
   if (req.query.key !== API_KEY) return res.status(401).send("No autorizado");
   const { id, url, name } = req.body;
@@ -114,7 +113,6 @@ app.post("/deleteAll", async (req, res) => {
 app.post("/addBulk", async (req, res) => {
   if (req.query.key !== API_KEY) return res.status(401).send("No autorizado");
   const { list, category } = req.body;
-  
   if (!list || list.trim() === "") return res.redirect(`/admin?key=${API_KEY}`);
 
   let finalCat = category;
@@ -143,15 +141,12 @@ app.post("/addBulk", async (req, res) => {
 });
 
 // --- PANEL ADMIN ---
-
 app.get("/admin", async (req, res) => {
   if (req.query.key !== API_KEY) return res.send("No autorizado");
-  
   try {
     const streams = await collection.find().sort({ createdAt: 1 }).toArray();
     const categoriasFijas = ["Cine", "Radio", "Infantiles", "Entretenimiento", "Deportes", "Nacionales"];
 
-    // AQUÍ SE AGREGA EL BOTÓN DE PLAY/PAUSA RESTAURADO
     const renderRowSimple = (s) => `
     <tr id="row-${s._id}">
       <td width="30">${s.status === 'online' ? '🟢' : '🔴'}</td>
@@ -163,8 +158,7 @@ app.get("/admin", async (req, res) => {
         <br/><span class="cat-badge">${s.category}</span>
       </td>
       <td><input class="input-url" id="url-${s._id}" value="${s.url}"></td>
-      <td width="120">
-        <button class="btn-play" onclick="window.open('${s.url}', '_blank')">▶️</button>
+      <td width="100">
         <button class="btn-play" onclick="guardar('${s._id}')">💾</button>
         <button class="btn-play" style="background:var(--danger)" onclick="eliminar('${s._id}')">❌</button>
       </td>
@@ -188,18 +182,23 @@ app.get("/admin", async (req, res) => {
         textarea { width: 100%; background: #000; color: #0f0; border: 1px solid #444; padding: 10px; font-family: monospace; border-radius: 4px; }
         table { width: 100%; border-collapse: collapse; }
         td { padding: 10px; border-bottom: 1px solid #2a2a2a; }
-        .btn-play { background: #444; border: none; color: white; padding: 8px 12px; border-radius: 5px; cursor: pointer; margin-right: 2px; }
+        .btn-play { background: #444; border: none; color: white; padding: 8px 15px; border-radius: 5px; cursor: pointer; }
         .input-url { width: 100%; background: #0a0a0a; border: 1px solid #333; color: #ccc; padding: 8px; border-radius: 4px; }
         .cat-badge { font-size: 10px; background: #333; padding: 2px 6px; border-radius: 10px; color: #aaa; }
-        .btn-danger-all { background: var(--danger); color: white; border: none; padding: 8px 15px; border-radius: 5px; cursor: pointer; font-weight: bold; margin-bottom: 15px; }
+        .btn-danger-all { background: var(--danger); color: white; border: none; padding: 8px 15px; border-radius: 5px; cursor: pointer; font-weight: bold; margin-bottom: 15 tax; }
         .cat-readonly { background: #111; color: var(--primary); border: 1px solid #333; padding: 10px; flex: 1; border-radius: 4px; font-weight: bold; pointer-events: none; }
         .cat-selector { background: #000; color: white; border: 1px solid #444; padding: 10px; flex: 1; border-radius: 4px; }
         .hidden-bulk { opacity: 0.5; pointer-events: none; filter: grayscale(1); }
+        .btn-toggle { background: #444; border: 1px solid #666; color: white; padding: 10px 20px; border-radius: 8px; cursor: pointer; font-weight: bold; font-size: 14px; }
+        .btn-toggle.active { background: var(--success); border-color: #55ff55; }
       </style>
     </head>
     <body>
       <div class="header">
-        <h2 style="margin:0;">📺 IPTV Manager</h2>
+        <div style="display:flex; align-items:center; gap:20px;">
+          <h2 style="margin:0;">📺 IPTV Manager</h2>
+          <button id="toggleBtn" class="btn-toggle" onclick="toggleAutoRefresh()">▶️ Auto-Refresh: OFF</button>
+        </div>
         <div class="nav-menu">
           <button class="nav-btn active" id="tab-all" onclick="showView('all', this)">Todas las Señales</button>
           <button class="nav-btn" onclick="showView('categories', this)">Por Categoría</button>
@@ -240,6 +239,32 @@ app.get("/admin", async (req, res) => {
         const allStreams = ${JSON.stringify(streams)};
         const categoriasArray = ${JSON.stringify(categoriasFijas)};
 
+        // --- LÓGICA DE AUTO-REFRESH RESTAURADA ---
+        let autoRefresh = localStorage.getItem("iptv_refresh") === "true";
+        const toggleBtn = document.getElementById("toggleBtn");
+
+        function updateToggleUI() {
+          if (autoRefresh) {
+            toggleBtn.innerHTML = "⏸️ Auto-Refresh: ON";
+            toggleBtn.classList.add("active");
+          } else {
+            toggleBtn.innerHTML = "▶️ Auto-Refresh: OFF";
+            toggleBtn.classList.remove("active");
+          }
+        }
+
+        function toggleAutoRefresh() {
+          autoRefresh = !autoRefresh;
+          localStorage.setItem("iptv_refresh", autoRefresh);
+          updateToggleUI();
+          if (autoRefresh) location.reload();
+        }
+
+        if (autoRefresh) {
+          setTimeout(() => { location.reload(); }, 30000); // Recarga cada 30 segundos si está ON
+        }
+        updateToggleUI();
+
         function updateCatInput(view, selectedCat = "") {
           const container = document.getElementById('cat-input-container');
           const bulkCard = document.getElementById('bulk-card');
@@ -254,7 +279,7 @@ app.get("/admin", async (req, res) => {
           } else {
             if (!selectedCat) {
               bulkCard.classList.add('hidden-bulk');
-              container.innerHTML = '<p style="color:#888; font-size:12px;">Selecciona una sub-categoría abajo.</p>';
+              container.innerHTML = '<p style="color:#888; font-size:12px;">Selecciona una categoría abajo.</p>';
             } else {
               bulkCard.classList.remove('hidden-bulk');
               let options = categoriasArray.map(c => \`<option value="\${c}" \${c === selectedCat ? 'selected' : ''}>\${c}</option>\`).join('');
@@ -285,10 +310,7 @@ app.get("/admin", async (req, res) => {
               <td><img src="\${s.logo}" style="width:40px;height:40px;object-fit:contain;background:#000;border-radius:5px;"></td>
               <td><input class="input-url" id="name-\${s._id}" value="\${s.name}"></td>
               <td><input class="input-url" id="url-\${s._id}" value="\${s.url}"></td>
-              <td>
-                <button class="btn-play" onclick="window.open('\${s.url}', '_blank')">▶️</button>
-                <button class="btn-play" onclick="guardar('\${s._id}')">💾</button>
-              </td>
+              <td><button class="btn-play" onclick="guardar('\${s._id}')">💾</button></td>
             </tr>\`).join('');
         }
 
@@ -331,4 +353,4 @@ app.get("/admin", async (req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log("🚀 Panel con Play/Pausa Online"));
+app.listen(PORT, () => console.log("🚀 Panel con Auto-Refresh Online"));

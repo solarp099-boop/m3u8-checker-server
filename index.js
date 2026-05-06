@@ -13,6 +13,7 @@ const uri = process.env.MONGO_URI;
 const client = new MongoClient(uri);
 let collection;
 
+// --- CONFIGURACIÓN DE LOGOS ---
 const GITHUB_LOGOS_BASE = "https://raw.githubusercontent.com/solarp099-boop/logos-tv/main/";
 
 function generateLogoUrl(name) {
@@ -39,12 +40,11 @@ async function checkStreams() {
     for (const stream of streams) {
       let status = "offline";
       try {
-        // Timeout reducido a 3s para mayor rapidez en el bucle
-        const res = await axios.head(stream.url, { timeout: 3000, headers: { "User-Agent": "Mozilla/5.0" } });
+        const res = await axios.head(stream.url, { timeout: 4000, headers: { "User-Agent": "Mozilla/5.0" } });
         if (res.status >= 200 && res.status < 400) status = "online";
       } catch {
         try {
-          const resGet = await axios.get(stream.url, { timeout: 4000, headers: { "User-Agent": "Mozilla/5.0" }, validateStatus: () => true });
+          const resGet = await axios.get(stream.url, { timeout: 6000, headers: { "User-Agent": "Mozilla/5.0" }, validateStatus: () => true });
           if (resGet.status === 200 || resGet.status === 206) status = "online";
         } catch { status = "offline"; }
       }
@@ -58,17 +58,20 @@ async function checkStreams() {
 
 (async () => {
   await conectarDB();
-  setInterval(checkStreams, 60000); // Reducido a 1 minuto para mayor frecuencia
+  setInterval(checkStreams, 120000);
 })();
 
-// --- ENDPOINTS PARA LA APP ---
+// --- VINCULACIÓN CORREGIDA PARA ANDROID STUDIO ---
 
+// Este endpoint es el que usa tu MainActivity.kt
 app.get("/streams/main", async (req, res) => {
   if (req.query.key !== API_KEY) return res.status(401).json([]);
+  // Forzamos la búsqueda exacta para que coincida con lo guardado en el panel
   const streams = await collection.find({ category: "Pantalla Principal" }).sort({ createdAt: 1 }).toArray(); 
   res.json(streams);
 });
 
+// Este endpoint es el que usa tu TodasLasSeñalesActivity.kt
 app.get("/streams/all", async (req, res) => {
   if (req.query.key !== API_KEY) return res.status(401).json([]);
   const streams = await collection.find({ category: "Todas las Señales" }).sort({ createdAt: 1 }).toArray(); 
@@ -87,13 +90,12 @@ app.get("/streams/category", async (req, res) => {
 app.post("/update", async (req, res) => {
   if (req.query.key !== API_KEY) return res.status(401).send("No autorizado");
   const { id, url, name } = req.body;
-  const updateData = { url: url, status: "pending" }; // Al editar, vuelve a gris para re-verificar
+  const updateData = { url: url };
   if (name) {
     updateData.name = name;
     updateData.logo = generateLogoUrl(name);
   }
   await collection.updateOne({ _id: new ObjectId(id) }, { $set: updateData });
-  checkStreams(); // Dispara verificación inmediata
   res.json({ ok: true });
 });
 
@@ -120,6 +122,7 @@ app.post("/addBulk", async (req, res) => {
   const { list, category } = req.body;
   if (!list || list.trim() === "") return res.redirect(`/admin?key=${API_KEY}`);
 
+  // Normalización crítica para que la App Avanzada vea los datos
   let finalCat = category;
   if (category === "CANALES DE TODAS LAS SEÑALES") finalCat = "Todas las Señales";
   if (category === "PANTALLA PRINCIPAL") finalCat = "Pantalla Principal";
@@ -136,19 +139,16 @@ app.post("/addBulk", async (req, res) => {
         url: parts[1].trim(),
         logo: generateLogoUrl(channelName),
         category: finalCat, 
-        status: "pending", // 🟢 CAMBIO: Ahora aparecen en gris (pending)
+        status: "online", 
         createdAt: new Date(baseTime + index)
       });
     }
   });
-  if (toInsert.length > 0) {
-    await collection.insertMany(toInsert);
-    checkStreams(); // 🚀 CAMBIO: Verifica apenas se agregan
-  }
+  if (toInsert.length > 0) await collection.insertMany(toInsert);
   res.redirect(`/admin?key=${API_KEY}`);
 });
 
-// --- PANEL ADMIN ---
+// --- PANEL ADMIN CON BOTONES ---
 
 app.get("/admin", async (req, res) => {
   if (req.query.key !== API_KEY) return res.send("No autorizado");
@@ -156,16 +156,9 @@ app.get("/admin", async (req, res) => {
     const streams = await collection.find().sort({ createdAt: 1 }).toArray();
     const categoriasFijas = ["Cine", "Radio", "Infantiles", "Entretenimiento", "Deportes", "Nacionales"];
 
-    // Función para definir color del punto
-    const getStatusIcon = (status) => {
-        if (status === 'online') return '🟢';
-        if (status === 'offline') return '🔴';
-        return '⚫'; // Gris/Oscuro para 'pending'
-    };
-
     const renderRowSimple = (s) => `
     <tr id="row-${s._id}">
-      <td width="30">${getStatusIcon(s.status)}</td>
+      <td width="30">${s.status === 'online' ? '🟢' : '🔴'}</td>
       <td width="50">
         <img src="${s.logo || ''}" onerror="this.src='https://cdn-icons-png.flaticon.com/512/3172/3172551.png'" style="width:45px;height:45px;border-radius:8px;object-fit:contain;background:#000;border:1px solid #333;">
       </td>
@@ -235,18 +228,18 @@ app.get("/admin", async (req, res) => {
       </div>
 
       <div id="view-categories" class="view-container">
-          <div style="margin-bottom:15px; display:flex; gap:8px; flex-wrap:wrap;">
-            ${categoriasFijas.map(cat => `<button class="nav-btn cat-filter-btn" style="font-size:12px;" onclick="filterCat('${cat}', this)">${cat}</button>`).join('')}
-          </div>
-          <div id="cat-actions" style="display:none">
-             <button class="btn-danger-all" id="btnDelCat">🗑 Limpiar Categoría</button>
-             <table id="cat-table-body"></table>
-          </div>
+         <div style="margin-bottom:15px; display:flex; gap:8px; flex-wrap:wrap;">
+           ${categoriasFijas.map(cat => `<button class="nav-btn cat-filter-btn" style="font-size:12px;" onclick="filterCat('${cat}', this)">${cat}</button>`).join('')}
+         </div>
+         <div id="cat-actions" style="display:none">
+            <button class="btn-danger-all" id="btnDelCat">🗑 Limpiar Categoría</button>
+            <table id="cat-table-body"></table>
+         </div>
       </div>
 
       <div id="view-main" class="view-container">
-          <button class="btn-danger-all" onclick="borrarMasivo('main')">🗑 Limpiar Pantalla Principal</button>
-          <table>${streams.filter(s => s.category === "Pantalla Principal").map(s => renderRowSimple(s)).join('')}</table>
+         <button class="btn-danger-all" onclick="borrarMasivo('main')">🗑 Limpiar Pantalla Principal</button>
+         <table>${streams.filter(s => s.category === "Pantalla Principal").map(s => renderRowSimple(s)).join('')}</table>
       </div>
 
       <script>
@@ -314,24 +307,14 @@ app.get("/admin", async (req, res) => {
           document.getElementById('btnDelCat').onclick = () => borrarMasivo('category', cat);
           updateCatInput('categories', cat);
           const filtered = allStreams.filter(s => s.category === cat);
-          
-          document.getElementById('cat-table-body').innerHTML = filtered.map(s => {
-            let icon = '⚫';
-            if(s.status === 'online') icon = '🟢';
-            if(s.status === 'offline') icon = '🔴';
-            
-            return \`
+          document.getElementById('cat-table-body').innerHTML = filtered.map(s => \`
             <tr>
-              <td>\${icon}</td>
+              <td>\${s.status === 'online' ? '🟢' : '🔴'}</td>
               <td><img src="\${s.logo}" style="width:40px;height:40px;object-fit:contain;background:#000;border-radius:5px;"></td>
               <td><input class="input-url" id="name-\${s._id}" value="\${s.name}"></td>
               <td><input class="input-url" id="url-\${s._id}" value="\${s.url}"></td>
-              <td width="100">
-                <button class="btn-play" onclick="guardar('\${s._id}')">💾</button>
-                <button class="btn-play" style="background:var(--danger)" onclick="eliminar('\${s._id}')">❌</button>
-              </td>
-            </tr>\`;
-          }).join('');
+              <td><button class="btn-play" onclick="guardar('\${s._id}')">💾</button></td>
+            </tr>\`).join('');
         }
 
         async function guardar(id) {
@@ -346,7 +329,7 @@ app.get("/admin", async (req, res) => {
         }
 
         async function eliminar(id) {
-          if(!confirm("¿Eliminar este canal?")) return;
+          if(!confirm("¿Eliminar?")) return;
           await fetch("/deleteStream?key=" + API_KEY, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -356,7 +339,7 @@ app.get("/admin", async (req, res) => {
         }
 
         async function borrarMasivo(type, value = '') {
-          if (!confirm("¿Borrar sección completa?")) return;
+          if (!confirm("¿Borrar sección?")) return;
           await fetch("/deleteAll?key=" + API_KEY, {
             method: "POST",
             headers: { "Content-Type": "application/json" },

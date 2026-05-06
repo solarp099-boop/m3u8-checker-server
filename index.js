@@ -60,31 +60,28 @@ async function checkStreams() {
   setInterval(checkStreams, 60000);
 })();
 
-// --- APIS CORREGIDAS ---
+// --- APIS FILTRADAS (EL MURO) ---
 
-// 1. ESTA RUTA ES PARA EL INICIO DE TU APP (MainActivity)
-// Solo muestra los canales que marcaste como "Pantalla Principal"
 app.get("/streams/main", async (req, res) => {
   if (req.query.key !== API_KEY) return res.status(401).json([]);
   const streams = await collection.find({ category: "Pantalla Principal" }).sort({ createdAt: 1 }).toArray(); 
   res.json(streams);
 });
 
-// 2. ESTA RUTA ES PARA "TODOS LOS CANALES" (TodasLasSenalesActivity)
-// ¡AQUÍ ESTÁ EL TRUCO!: Quitamos el filtro para que envíe ABSOLUTAMENTE TODO (incluyendo los de Pantalla Principal)
 app.get("/streams/all", async (req, res) => {
   if (req.query.key !== API_KEY) return res.status(401).json([]);
-  // Al dejar el find() vacío, enviamos todos los canales de la base de datos a tu app
-  const streams = await collection.find().sort({ createdAt: 1 }).toArray(); 
+  const streams = await collection.find({ category: "Todas las Señales" }).sort({ createdAt: 1 }).toArray(); 
   res.json(streams);
 });
 
-// Ruta por defecto (mantenida por seguridad)
-app.get("/streams", async (req, res) => {
+app.get("/streams/category", async (req, res) => {
   if (req.query.key !== API_KEY) return res.status(401).json([]);
-  const streams = await collection.find().sort({ createdAt: 1 }).toArray(); 
+  const cat = req.query.name;
+  const streams = await collection.find({ category: cat }).sort({ createdAt: 1 }).toArray();
   res.json(streams);
 });
+
+// --- OPERACIONES (CRUD) ---
 
 app.post("/update", async (req, res) => {
   if (req.query.key !== API_KEY) return res.status(401).send("No autorizado");
@@ -111,7 +108,7 @@ app.post("/deleteAll", async (req, res) => {
   let query = {};
   if (filterType === "category") query = { category: filterValue };
   if (filterType === "main") query = { category: "Pantalla Principal" };
-  if (filterType === "all") query = {};
+  if (filterType === "all") query = { category: "Todas las Señales" };
   await collection.deleteMany(query);
   res.json({ ok: true });
 });
@@ -121,7 +118,7 @@ app.post("/addBulk", async (req, res) => {
   const { list, category } = req.body;
   
   let finalCat = category;
-  if (category === "CANALES DE TODAS LAS SEÑALES") finalCat = "Nacionales";
+  if (category === "CANALES DE TODAS LAS SEÑALES") finalCat = "Todas las Señales";
   if (category === "PANTALLA PRINCIPAL") finalCat = "Pantalla Principal";
 
   const lines = list.split("\n");
@@ -135,7 +132,7 @@ app.post("/addBulk", async (req, res) => {
         name: channelName,
         url: parts[1].trim(),
         logo: generateLogoUrl(channelName),
-        category: finalCat || "Nacionales",
+        category: finalCat, 
         status: "unknown",
         createdAt: new Date(baseTime + index)
       });
@@ -153,8 +150,6 @@ app.get("/admin", async (req, res) => {
   try {
     const streams = await collection.find().sort({ createdAt: 1 }).toArray();
     const categoriasFijas = ["Cine", "Radio", "Infantiles", "Entretenimiento", "Deportes", "Nacionales"];
-    const extraCats = [...new Set(streams.map(s => s.category))].filter(c => !categoriasFijas.includes(c) && c !== "Pantalla Principal");
-    const todasLasCategorias = [...categoriasFijas, ...extraCats];
 
     const renderRowSimple = (s) => `
     <tr id="row-${s._id}">
@@ -177,7 +172,7 @@ app.get("/admin", async (req, res) => {
     <!DOCTYPE html>
     <html>
     <head>
-      <title>IPTV Manager - Fix Dual View</title>
+      <title>IPTV Manager - Muro de Categorías</title>
       <style>
         :root { --bg: #0f0f0f; --card: #1a1a1a; --primary: #3d5afe; --danger: #ff1744; --success: #28a745; --text: #ffffff; }
         body { font-family: 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); margin: 0; padding: 20px; }
@@ -190,44 +185,41 @@ app.get("/admin", async (req, res) => {
         .bulk-section { background: #222; padding: 15px; border-radius: 8px; margin-bottom: 20px; border-left: 4px solid var(--primary); }
         textarea { width: 100%; background: #000; color: #0f0; border: 1px solid #444; padding: 10px; font-family: monospace; border-radius: 4px; resize: vertical; }
         table { width: 100%; border-collapse: collapse; }
-        td { padding: 10px; border-bottom: 1px solid #2a2a2a; vertical-align: middle; }
+        td { padding: 10px; border-bottom: 1px solid #2a2a2a; }
         .btn-play { background: #444; border: none; color: white; padding: 8px 15px; border-radius: 5px; cursor: pointer; }
         .input-url { width: 100%; background: #0a0a0a; border: 1px solid #333; color: #ccc; padding: 8px; border-radius: 4px; }
         .cat-badge { font-size: 10px; background: #333; padding: 2px 6px; border-radius: 10px; color: #aaa; }
         .btn-danger-all { background: var(--danger); color: white; border: none; padding: 8px 15px; border-radius: 5px; cursor: pointer; font-weight: bold; margin-bottom: 15px; }
-        .cat-selector { background: #000; color: white; border: 1px solid #444; padding: 8px; flex: 1; border-radius: 4px; }
-        .cat-readonly { background: #111; color: #888; border: 1px solid #333; padding: 8px; flex: 1; border-radius: 4px; font-weight: bold; pointer-events: none; }
+        .cat-readonly { background: #111; color: var(--primary); border: 1px solid #333; padding: 10px; flex: 1; border-radius: 4px; font-weight: bold; pointer-events: none; }
+        .cat-selector { background: #000; color: white; border: 1px solid #444; padding: 10px; flex: 1; border-radius: 4px; }
       </style>
     </head>
     <body>
       <div class="header">
-        <div style="display:flex; align-items:center; gap:15px;">
-          <h2 style="margin:0;">📺 IPTV Manager</h2>
-          <button id="btnAutoRefresh" class="btn-play" onclick="toggleRefresh()">⏸ Pausar</button>
-        </div>
+        <h2 style="margin:0;">📺 IPTV Manager</h2>
         <div class="nav-menu">
-          <button class="nav-btn active" onclick="showView('all', this)">Todas las Señales</button>
+          <button class="nav-btn active" id="tab-all" onclick="showView('all', this)">Todas las Señales</button>
           <button class="nav-btn" onclick="showView('categories', this)">Por Categoría</button>
           <button class="nav-btn" onclick="showView('main', this)">Pantalla Principal</button>
         </div>
       </div>
 
       <div class="bulk-section">
-        <h4 style="margin:0 0 10px 0;">➕ Carga Masiva (Nombre, URL)</h4>
-        <form method="POST" action="/addBulk?key=${API_KEY}">
-          <textarea name="list" rows="2" placeholder="Ej: Latina, http://url..."></textarea>
+        <h4 style="margin:0 0 10px 0;">➕ Carga Masiva</h4>
+        <form method="POST" action="/addBulk?key=${API_KEY}" id="bulkForm">
+          <textarea name="list" id="bulkTextarea" rows="2" placeholder="Nombre, URL"></textarea>
           <div style="margin-top:10px; display:flex; gap:10px;" id="cat-input-container"></div>
         </form>
       </div>
 
       <div id="view-all" class="view-container active">
-        <button class="btn-danger-all" onclick="borrarMasivo('all')">🗑 Borrar TODO</button>
-        <table>${streams.map(s => renderRowSimple(s)).join('')}</table>
+        <button class="btn-danger-all" onclick="borrarMasivo('all')">🗑 Limpiar Sección</button>
+        <table>${streams.filter(s => s.category === "Todas las Señales").map(s => renderRowSimple(s)).join('')}</table>
       </div>
 
       <div id="view-categories" class="view-container">
-         <div style="margin-bottom:15px; display:flex; gap:5px; flex-wrap:wrap;">
-           ${todasLasCategorias.map(cat => `<button class="nav-btn" style="font-size:11px; padding:6px 12px;" onclick="filterCat('${cat}')">${cat}</button>`).join('')}
+         <div style="margin-bottom:15px; display:flex; gap:8px; flex-wrap:wrap;">
+           ${categoriasFijas.map(cat => `<button class="nav-btn" style="font-size:12px;" onclick="filterCat('${cat}')">${cat}</button>`).join('')}
          </div>
          <div id="cat-actions" style="display:none">
             <button class="btn-danger-all" id="btnDelCat">🗑 Limpiar Categoría</button>
@@ -242,15 +234,14 @@ app.get("/admin", async (req, res) => {
 
       <script>
         const API_KEY = "${API_KEY}";
-        let autoRefresh = true;
         const allStreams = ${JSON.stringify(streams)};
-        const categoriasArray = ${JSON.stringify(todasLasCategorias)};
-
-        function toggleRefresh() { autoRefresh = !autoRefresh; document.getElementById("btnAutoRefresh").innerText = autoRefresh ? "⏸ Pausar" : "▶ Reanudar"; }
-        setInterval(() => { if(autoRefresh) location.reload(); }, 60000);
+        const categoriasArray = ${JSON.stringify(categoriasFijas)};
 
         function updateCatInput(view, selectedCat = "") {
           const container = document.getElementById('cat-input-container');
+          // LIMPIEZA DE SEGURIDAD: Vacía el texto al cambiar de pestaña para evitar duplicados accidentales
+          document.getElementById('bulkTextarea').value = ""; 
+
           if (view === 'main') {
             container.innerHTML = \`<input name="category" class="cat-readonly" value="PANTALLA PRINCIPAL" readonly> <button class="nav-btn" style="background:var(--success)">Agregar</button>\`;
           } else if (view === 'all') {
@@ -273,23 +264,16 @@ app.get("/admin", async (req, res) => {
         function filterCat(cat) {
           document.getElementById('cat-actions').style.display = 'block';
           document.getElementById('btnDelCat').onclick = () => borrarMasivo('category', cat);
-          updateCatInput('categories', cat);
+          updateCatInput('categories', cat); // Esto limpia el textarea y pone la categoría correcta
           const filtered = allStreams.filter(s => s.category === cat);
-          let html = "";
-          filtered.forEach(s => {
-            html += \`
-            <tr id="row-\${s._id}">
+          document.getElementById('cat-table-body').innerHTML = filtered.map(s => \`
+            <tr>
               <td>\${s.status === 'online' ? '🟢' : '🔴'}</td>
-              <td><img src="\${s.logo || ''}" onerror="this.src='https://cdn-icons-png.flaticon.com/512/3172/3172551.png'" style="width:45px;height:45px;border-radius:8px;object-fit:contain;background:#000;"></td>
-              <td><input class="input-url" id="name-\${s._id}" value="\${s.name}"><br/><span class="cat-badge">\${s.category}</span></td>
+              <td><img src="\${s.logo}" style="width:40px;height:40px;object-fit:contain;background:#000;border-radius:5px;"></td>
+              <td><input class="input-url" id="name-\${s._id}" value="\${s.name}"></td>
               <td><input class="input-url" id="url-\${s._id}" value="\${s.url}"></td>
-              <td>
-                <button class="btn-play" onclick="guardar('\${s._id}')">💾</button>
-                <button class="btn-play" style="background:var(--danger)" onclick="eliminar('\${s._id}')">❌</button>
-              </td>
-            </tr>\`;
-          });
-          document.getElementById('cat-table-body').innerHTML = html;
+              <td><button class="btn-play" onclick="guardar('\${s._id}')">💾</button></td>
+            </tr>\`).join('');
         }
 
         async function guardar(id) {
@@ -314,7 +298,7 @@ app.get("/admin", async (req, res) => {
         }
 
         async function borrarMasivo(type, value = '') {
-          if (!confirm("¿Seguro?")) return;
+          if (!confirm("¿Borrar sección?")) return;
           await fetch("/deleteAll?key=" + API_KEY, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -331,4 +315,4 @@ app.get("/admin", async (req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log("🚀 Servidor IPTV con Fix de Doble Vista"));
+app.listen(PORT, () => console.log("🚀 Sistema Blindado Online"));

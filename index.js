@@ -31,7 +31,6 @@ async function conectarDB() {
   } catch (e) { console.error("❌ Error MongoDB:", e); }
 }
 
-// Checker de estado
 let checking = false;
 async function checkStreams() {
   if (checking || !collection) return;
@@ -60,7 +59,7 @@ async function checkStreams() {
   setInterval(checkStreams, 60000);
 })();
 
-// --- APIS FILTRADAS (EL MURO) ---
+// --- APIS ---
 
 app.get("/streams/main", async (req, res) => {
   if (req.query.key !== API_KEY) return res.status(401).json([]);
@@ -81,7 +80,7 @@ app.get("/streams/category", async (req, res) => {
   res.json(streams);
 });
 
-// --- OPERACIONES (CRUD) ---
+// --- CRUD ---
 
 app.post("/update", async (req, res) => {
   if (req.query.key !== API_KEY) return res.status(401).send("No autorizado");
@@ -117,6 +116,8 @@ app.post("/addBulk", async (req, res) => {
   if (req.query.key !== API_KEY) return res.status(401).send("No autorizado");
   const { list, category } = req.body;
   
+  if (!list || list.trim() === "") return res.redirect(`/admin?key=${API_KEY}`);
+
   let finalCat = category;
   if (category === "CANALES DE TODAS LAS SEÑALES") finalCat = "Todas las Señales";
   if (category === "PANTALLA PRINCIPAL") finalCat = "Pantalla Principal";
@@ -142,7 +143,7 @@ app.post("/addBulk", async (req, res) => {
   res.redirect(`/admin?key=${API_KEY}`);
 });
 
-// --- PANEL DE ADMINISTRACIÓN ---
+// --- PANEL ADMIN ---
 
 app.get("/admin", async (req, res) => {
   if (req.query.key !== API_KEY) return res.send("No autorizado");
@@ -182,7 +183,7 @@ app.get("/admin", async (req, res) => {
         .nav-btn.active { background: var(--primary); }
         .view-container { display: none; background: var(--card); padding: 20px; border-radius: 12px; }
         .view-container.active { display: block; }
-        .bulk-section { background: #222; padding: 15px; border-radius: 8px; margin-bottom: 20px; border-left: 4px solid var(--primary); }
+        .bulk-section { background: #222; padding: 15px; border-radius: 8px; margin-bottom: 20px; border-left: 4px solid var(--primary); transition: all 0.3s ease; }
         textarea { width: 100%; background: #000; color: #0f0; border: 1px solid #444; padding: 10px; font-family: monospace; border-radius: 4px; resize: vertical; }
         table { width: 100%; border-collapse: collapse; }
         td { padding: 10px; border-bottom: 1px solid #2a2a2a; }
@@ -192,6 +193,7 @@ app.get("/admin", async (req, res) => {
         .btn-danger-all { background: var(--danger); color: white; border: none; padding: 8px 15px; border-radius: 5px; cursor: pointer; font-weight: bold; margin-bottom: 15px; }
         .cat-readonly { background: #111; color: var(--primary); border: 1px solid #333; padding: 10px; flex: 1; border-radius: 4px; font-weight: bold; pointer-events: none; }
         .cat-selector { background: #000; color: white; border: 1px solid #444; padding: 10px; flex: 1; border-radius: 4px; }
+        .hidden-bulk { opacity: 0.5; pointer-events: none; filter: grayscale(1); }
       </style>
     </head>
     <body>
@@ -199,13 +201,13 @@ app.get("/admin", async (req, res) => {
         <h2 style="margin:0;">📺 IPTV Manager</h2>
         <div class="nav-menu">
           <button class="nav-btn active" id="tab-all" onclick="showView('all', this)">Todas las Señales</button>
-          <button class="nav-btn" onclick="showView('categories', this)">Por Categoría</button>
-          <button class="nav-btn" onclick="showView('main', this)">Pantalla Principal</button>
+          <button class="nav-btn" id="tab-categories" onclick="showView('categories', this)">Por Categoría</button>
+          <button class="nav-btn" id="tab-main" onclick="showView('main', this)">Pantalla Principal</button>
         </div>
       </div>
 
-      <div class="bulk-section">
-        <h4 style="margin:0 0 10px 0;">➕ Carga Masiva</h4>
+      <div class="bulk-section" id="bulk-card">
+        <h4 style="margin:0 0 10px 0;">➕ Carga Masiva <span id="bulk-target-label" style="font-size:12px; color:var(--primary)"></span></h4>
         <form method="POST" action="/addBulk?key=${API_KEY}" id="bulkForm">
           <textarea name="list" id="bulkTextarea" rows="2" placeholder="Nombre, URL"></textarea>
           <div style="margin-top:10px; display:flex; gap:10px;" id="cat-input-container"></div>
@@ -219,7 +221,7 @@ app.get("/admin", async (req, res) => {
 
       <div id="view-categories" class="view-container">
          <div style="margin-bottom:15px; display:flex; gap:8px; flex-wrap:wrap;">
-           ${categoriasFijas.map(cat => `<button class="nav-btn" style="font-size:12px;" onclick="filterCat('${cat}')">${cat}</button>`).join('')}
+           ${categoriasFijas.map(cat => `<button class="nav-btn cat-filter-btn" style="font-size:12px;" onclick="filterCat('${cat}', this)">${cat}</button>`).join('')}
          </div>
          <div id="cat-actions" style="display:none">
             <button class="btn-danger-all" id="btnDelCat">🗑 Limpiar Categoría</button>
@@ -239,18 +241,32 @@ app.get("/admin", async (req, res) => {
 
         function updateCatInput(view, selectedCat = "") {
           const container = document.getElementById('cat-input-container');
-          // LIMPIEZA DE SEGURIDAD: Vacía el texto al cambiar de pestaña para evitar duplicados accidentales
-          document.getElementById('bulkTextarea').value = ""; 
+          const bulkCard = document.getElementById('bulk-card');
+          const bulkTextarea = document.getElementById('bulkTextarea');
+          
+          // REGLA DE INDEPENDENCIA: Siempre vaciar al cambiar de pestaña
+          bulkTextarea.value = "";
 
           if (view === 'main') {
+            bulkCard.classList.remove('hidden-bulk');
             container.innerHTML = \`<input name="category" class="cat-readonly" value="PANTALLA PRINCIPAL" readonly> <button class="nav-btn" style="background:var(--success)">Agregar</button>\`;
           } else if (view === 'all') {
+            bulkCard.classList.remove('hidden-bulk');
             container.innerHTML = \`<input name="category" class="cat-readonly" value="CANALES DE TODAS LAS SEÑALES" readonly> <button class="nav-btn" style="background:var(--success)">Agregar</button>\`;
           } else {
-            let options = categoriasArray.map(c => \`<option value="\${c}" \${c === selectedCat ? 'selected' : ''}>\${c}</option>\`).join('');
-            container.innerHTML = \`<select name="category" class="cat-selector">\${options}</select><button class="nav-btn" style="background:var(--success)">Agregar</button>\`;
+            // Si estamos en categorías pero no hay una seleccionada, bloqueamos la carga masiva
+            if (!selectedCat) {
+              bulkCard.classList.add('hidden-bulk');
+              container.innerHTML = '<p style="color:#888; font-size:12px;">Selecciona una sub-categoría abajo para cargar canales.</p>';
+            } else {
+              bulkCard.classList.remove('hidden-bulk');
+              let options = categoriasArray.map(c => \`<option value="\${c}" \${c === selectedCat ? 'selected' : ''}>\${c}</option>\`).join('');
+              container.innerHTML = \`<select name="category" class="cat-selector">\${options}</select><button class="nav-btn" style="background:var(--success)">Agregar</button>\`;
+            }
           }
         }
+
+        // Inicializar
         updateCatInput('all');
 
         function showView(view, btn) {
@@ -258,13 +274,24 @@ app.get("/admin", async (req, res) => {
           document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
           document.getElementById('view-' + view).classList.add('active');
           btn.classList.add('active');
+          
+          // Resetear estados de filtros si se cambia de pestaña
+          document.querySelectorAll('.cat-filter-btn').forEach(b => b.style.border = "none");
+          
           updateCatInput(view);
         }
 
-        function filterCat(cat) {
+        function filterCat(cat, btn) {
+          // Visual: Resaltar botón de categoría seleccionada
+          document.querySelectorAll('.cat-filter-btn').forEach(b => b.style.background = "#333");
+          btn.style.background = "var(--primary)";
+
           document.getElementById('cat-actions').style.display = 'block';
           document.getElementById('btnDelCat').onclick = () => borrarMasivo('category', cat);
-          updateCatInput('categories', cat); // Esto limpia el textarea y pone la categoría correcta
+          
+          // Actualizar carga masiva para esta categoría específica y vaciar el texto
+          updateCatInput('categories', cat);
+          
           const filtered = allStreams.filter(s => s.category === cat);
           document.getElementById('cat-table-body').innerHTML = filtered.map(s => \`
             <tr>

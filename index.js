@@ -36,9 +36,12 @@ async function checkStreams() {
   checking = true;
   try {
     const streams = await collection.find().toArray();
+    
+    // 🚀 MEJORA: Verificación en PARALELO para máxima velocidad
     await Promise.all(streams.map(async (stream) => {
       let status = "offline";
       try {
+        // Timeout ultra rápido de 2.5s para no bloquear el panel
         const res = await axios.head(stream.url, { 
           timeout: 2500, 
           headers: { "User-Agent": "Mozilla/5.0" },
@@ -55,6 +58,7 @@ async function checkStreams() {
           status = "online";
         } catch { status = "offline"; }
       }
+
       if (stream.status !== status) {
         await collection.updateOne({ _id: stream._id }, { $set: { status } });
       }
@@ -65,6 +69,7 @@ async function checkStreams() {
 
 (async () => {
   await conectarDB();
+  // 🚀 MEJORA: Chequeo cada 15 segundos en lugar de cada minuto
   setInterval(checkStreams, 15000); 
 })();
 
@@ -72,23 +77,20 @@ async function checkStreams() {
 
 app.get("/streams/main", async (req, res) => {
   if (req.query.key !== API_KEY) return res.status(401).json([]);
-  // 🟢 CAMBIO: .sort({ createdAt: -1 }) para que el último agregado aparezca primero
-  const streams = await collection.find({ category: "Pantalla Principal" }).sort({ createdAt: -1 }).toArray(); 
+  const streams = await collection.find({ category: "Pantalla Principal" }).sort({ createdAt: 1 }).toArray(); 
   res.json(streams);
 });
 
 app.get("/streams/all", async (req, res) => {
   if (req.query.key !== API_KEY) return res.status(401).json([]);
-  // 🟢 CAMBIO: .sort({ createdAt: -1 }) para que el último agregado aparezca primero
-  const streams = await collection.find({ category: "Todas las Señales" }).sort({ createdAt: -1 }).toArray(); 
+  const streams = await collection.find({ category: "Todas las Señales" }).sort({ createdAt: 1 }).toArray(); 
   res.json(streams);
 });
 
 app.get("/streams/category", async (req, res) => {
   if (req.query.key !== API_KEY) return res.status(401).json([]);
   const cat = req.query.name;
-  // 🟢 CAMBIO: .sort({ createdAt: -1 }) para que el último agregado aparezca primero
-  const streams = await collection.find({ category: cat }).sort({ createdAt: -1 }).toArray();
+  const streams = await collection.find({ category: cat }).sort({ createdAt: 1 }).toArray();
   res.json(streams);
 });
 
@@ -163,8 +165,7 @@ app.post("/addBulk", async (req, res) => {
 app.get("/admin", async (req, res) => {
   if (req.query.key !== API_KEY) return res.send("No autorizado");
   try {
-    // 🟢 CAMBIO: .sort({ createdAt: -1 }) para que el último agregado aparezca primero en el panel
-    const streams = await collection.find().sort({ createdAt: -1 }).toArray();
+    const streams = await collection.find().sort({ createdAt: 1 }).toArray();
     const categoriasFijas = ["Cine", "Radio", "Infantiles", "Entretenimiento", "Deportes", "Nacionales"];
 
     const getStatusIcon = (status) => {
@@ -204,7 +205,7 @@ app.get("/admin", async (req, res) => {
         .nav-btn.active { background: var(--primary); }
         .view-container { display: none; background: var(--card); padding: 20px; border-radius: 12px; }
         .view-container.active { display: block; }
-        .bulk-section { background: #222; padding: 15px; border-radius: 8px; margin-bottom: 20px; border-left: 4px solid var(--primary); scroll-margin-top: 20px; }
+        .bulk-section { background: #222; padding: 15px; border-radius: 8px; margin-bottom: 20px; border-left: 4px solid var(--primary); }
         textarea { width: 100%; background: #000; color: #0f0; border: 1px solid #444; padding: 10px; font-family: monospace; border-radius: 4px; }
         table { width: 100%; border-collapse: collapse; }
         td { padding: 10px; border-bottom: 1px solid #2a2a2a; }
@@ -212,7 +213,6 @@ app.get("/admin", async (req, res) => {
         .input-url { width: 100%; background: #0a0a0a; border: 1px solid #333; color: #ccc; padding: 8px; border-radius: 4px; }
         .cat-badge { font-size: 10px; background: #333; padding: 2px 6px; border-radius: 10px; color: #aaa; }
         .btn-danger-all { background: var(--danger); color: white; border: none; padding: 8px 15px; border-radius: 5px; cursor: pointer; font-weight: bold; margin-bottom: 15px; }
-        .btn-add-plus { background: var(--primary); color: white; border: none; padding: 5px 12px; border-radius: 5px; cursor: pointer; font-weight: bold; margin-bottom: 10px; font-size: 18px; }
         .cat-readonly { background: #111; color: var(--primary); border: 1px solid #333; padding: 10px; flex: 1; border-radius: 4px; font-weight: bold; pointer-events: none; }
         .cat-selector { background: #000; color: white; border: 1px solid #444; padding: 10px; flex: 1; border-radius: 4px; }
         .btn-toggle { background: #444; border: 1px solid #666; color: white; padding: 10px 20px; border-radius: 8px; cursor: pointer; font-weight: bold; }
@@ -241,10 +241,7 @@ app.get("/admin", async (req, res) => {
       </div>
 
       <div id="view-all" class="view-container active">
-        <div style="display:flex; justify-content:space-between; align-items:center;">
-          <button class="btn-add-plus" onclick="scrollToAdd()">+</button>
-          <button class="btn-danger-all" onclick="borrarMasivo('all')">🗑 Limpiar Sección</button>
-        </div>
+        <button class="btn-danger-all" onclick="borrarMasivo('all')">🗑 Limpiar Sección</button>
         <table>${streams.filter(s => s.category === "Todas las Señales").map(s => renderRowSimple(s)).join('')}</table>
       </div>
 
@@ -253,19 +250,13 @@ app.get("/admin", async (req, res) => {
             ${categoriasFijas.map(cat => `<button class="nav-btn cat-filter-btn" style="font-size:12px;" onclick="filterCat('${cat}', this)">${cat}</button>`).join('')}
           </div>
           <div id="cat-actions" style="display:none">
-             <div style="display:flex; justify-content:space-between; align-items:center;">
-                <button class="btn-add-plus" onclick="scrollToAdd()">+</button>
-                <button class="btn-danger-all" id="btnDelCat">🗑 Limpiar Categoría</button>
-             </div>
+             <button class="btn-danger-all" id="btnDelCat">🗑 Limpiar Categoría</button>
              <table id="cat-table-body"></table>
           </div>
       </div>
 
       <div id="view-main" class="view-container">
-          <div style="display:flex; justify-content:space-between; align-items:center;">
-            <button class="btn-add-plus" onclick="scrollToAdd()">+</button>
-            <button class="btn-danger-all" onclick="borrarMasivo('main')">🗑 Limpiar Pantalla Principal</button>
-          </div>
+          <button class="btn-danger-all" onclick="borrarMasivo('main')">🗑 Limpiar Pantalla Principal</button>
           <table>${streams.filter(s => s.category === "Pantalla Principal").map(s => renderRowSimple(s)).join('')}</table>
       </div>
 
@@ -276,11 +267,6 @@ app.get("/admin", async (req, res) => {
 
         let autoRefresh = localStorage.getItem("iptv_refresh") === "true";
         const toggleBtn = document.getElementById("toggleBtn");
-
-        function scrollToAdd() {
-          document.getElementById('bulk-card').scrollIntoView({ behavior: 'smooth' });
-          document.getElementById('bulkTextarea').focus();
-        }
 
         function updateToggleUI() {
           if (autoRefresh) {
@@ -299,6 +285,7 @@ app.get("/admin", async (req, res) => {
           if (autoRefresh) location.reload();
         }
 
+        // 🚀 MEJORA: Recarga visual del panel cada 15 segundos si está activo
         if (autoRefresh) { setTimeout(() => { location.reload(); }, 15000); }
         updateToggleUI();
 
@@ -306,16 +293,17 @@ app.get("/admin", async (req, res) => {
           const container = document.getElementById('cat-input-container');
           const bulkCard = document.getElementById('bulk-card');
           if (view === 'main') {
-            bulkCard.style.display = 'block';
+            bulkCard.classList.remove('hidden-bulk');
             container.innerHTML = \`<input name="category" class="cat-readonly" value="PANTALLA PRINCIPAL" readonly> <button class="nav-btn" style="background:var(--success)">Agregar</button>\`;
           } else if (view === 'all') {
-            bulkCard.style.display = 'block';
+            bulkCard.classList.remove('hidden-bulk');
             container.innerHTML = \`<input name="category" class="cat-readonly" value="CANALES DE TODAS LAS SEÑALES" readonly> <button class="nav-btn" style="background:var(--success)">Agregar</button>\`;
           } else {
             if (!selectedCat) {
-              bulkCard.style.display = 'none';
+              bulkCard.classList.add('hidden-bulk');
+              container.innerHTML = '<p style="color:#888;">Elige una categoría.</p>';
             } else {
-              bulkCard.style.display = 'block';
+              bulkCard.classList.remove('hidden-bulk');
               let options = categoriasArray.map(c => \`<option value="\${c}" \${c === selectedCat ? 'selected' : ''}>\${c}</option>\`).join('');
               container.innerHTML = \`<select name="category" class="cat-selector">\${options}</select><button class="nav-btn" style="background:var(--success)">Agregar</button>\`;
             }
@@ -347,7 +335,7 @@ app.get("/admin", async (req, res) => {
             return \`
             <tr>
               <td>\${icon}</td>
-              <td><img src="\${s.logo}" onerror="this.src='https://cdn-icons-png.flaticon.com/512/3172/3172551.png'" style="width:40px;height:40px;object-fit:contain;background:#000;border-radius:5px;"></td>
+              <td><img src="\${s.logo}" style="width:40px;height:40px;object-fit:contain;background:#000;border-radius:5px;"></td>
               <td><input class="input-url" id="name-\${s._id}" value="\${s.name}"></td>
               <td><input class="input-url" id="url-\${s._id}" value="\${s.url}"></td>
               <td width="100">
@@ -359,8 +347,6 @@ app.get("/admin", async (req, res) => {
         }
 
         async function guardar(id) {
-          // 🟢 CAMBIO: Alerta de confirmación para Guardar
-          if(!confirm("¿Estás seguro de que quieres guardar los cambios en este canal?")) return;
           const url = document.getElementById("url-" + id).value;
           const name = document.getElementById("name-" + id).value;
           await fetch("/update?key=" + API_KEY, {
@@ -372,8 +358,7 @@ app.get("/admin", async (req, res) => {
         }
 
         async function eliminar(id) {
-          // 🟢 CAMBIO: Alerta de confirmación para Eliminar
-          if(!confirm("¿Estás totalmente seguro de que quieres ELIMINAR este canal? Esta acción no se puede deshacer.")) return;
+          if(!confirm("¿Eliminar este canal?")) return;
           await fetch("/deleteStream?key=" + API_KEY, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -400,4 +385,4 @@ app.get("/admin", async (req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log("🚀 Sistema Blindado Online"));
+app.listen(PORT, () => console.log("🚀 Sistema de Detección Veloz Online"));

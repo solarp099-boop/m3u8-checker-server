@@ -36,6 +36,8 @@ async function checkStreams() {
   checking = true;
   try {
     const streams = await collection.find().toArray();
+    
+    // --- PASO 1: Verificar estado de salud ---
     await Promise.all(streams.map(async (stream) => {
       let status = "offline";
       try {
@@ -61,10 +63,13 @@ async function checkStreams() {
       }
     }));
 
+    // --- PASO 2: Autorrecuperación Global (Afecta a todas las secciones) ---
     const updatedStreams = await collection.find().toArray();
     for (const stream of updatedStreams) {
       if (stream.category !== "Librería de Respaldo" && stream.status === "offline") {
         const escapedName = stream.name.trim().replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
+        
+        // Buscamos si hay un reemplazo en la librería
         const backup = await collection.findOne({
           name: { $regex: new RegExp("^" + escapedName + "$", "i") },
           category: "Librería de Respaldo",
@@ -72,12 +77,18 @@ async function checkStreams() {
         }, { sort: { createdAt: 1 } });
 
         if (backup) {
-          await collection.updateOne(
-            { _id: stream._id }, 
+          // CAMBIO CLAVE: Actualizamos TODOS los canales con ese nombre en CUALQUIER categoría
+          await collection.updateMany(
+            { 
+              name: { $regex: new RegExp("^" + escapedName + "$", "i") },
+              category: { $ne: "Librería de Respaldo" } 
+            }, 
             { $set: { url: backup.url, status: "online" } }
           );
+          
+          // Consumimos el backup para que no se use infinitamente
           await collection.deleteOne({ _id: backup._id });
-          console.log(`🟢 [Self-Healing] Canal "${stream.name}" recuperado automáticamente.`);
+          console.log(`🟢 [Self-Healing Global] Canal "${stream.name}" recuperado en todas las secciones.`);
         }
       }
     }
@@ -95,12 +106,9 @@ async function checkStreams() {
 app.get("/streams", async (req, res) => {
   if (req.query.key !== API_KEY) return res.status(401).send("No autorizado");
   try {
-    // CAMBIO CLAVE: Búsqueda exacta de la categoría para la pantalla principal
     const streams = await collection.find({ category: "Pantalla Principal" }).sort({ createdAt: 1 }).toArray();
     res.json(streams || []);
-  } catch (e) {
-    res.status(500).json([]);
-  }
+  } catch (e) { res.status(500).json([]); }
 });
 
 app.get("/streams/all", async (req, res) => {
@@ -124,7 +132,6 @@ app.post("/addBulk", async (req, res) => {
   if (!list || list.trim() === "") return res.redirect(`/admin?key=${API_KEY}`);
 
   let finalCat = category;
-  // CAMBIO CLAVE: Sincronización de nombres para evitar errores de vinculación
   if (category === "CANALES DE TODAS LAS SEÑALES") finalCat = "Todas las Señales";
   if (category === "PANTALLA PRINCIPAL") finalCat = "Pantalla Principal";
   if (category === "LIBRERÍA DE RESPALDO") finalCat = "Librería de Respaldo";

@@ -90,18 +90,21 @@ async function checkStreams() {
   setInterval(checkStreams, 15000); 
 })();
 
-// --- ENDPOINTS PARA LA APP ANDROID (AHORA MUESTRAN TODOS LOS ESTADOS) ---
+// --- ENDPOINTS PARA LA APP ANDROID ---
 
 app.get("/streams", async (req, res) => {
   if (req.query.key !== API_KEY) return res.status(401).send("No autorizado");
-  // Eliminado el filtro de status "online" para mostrar todo en la Pantalla Principal
-  const streams = await collection.find({ category: "Pantalla Principal" }).sort({ createdAt: 1 }).toArray();
-  res.json(streams);
+  try {
+    // CAMBIO CLAVE: Búsqueda exacta de la categoría para la pantalla principal
+    const streams = await collection.find({ category: "Pantalla Principal" }).sort({ createdAt: 1 }).toArray();
+    res.json(streams || []);
+  } catch (e) {
+    res.status(500).json([]);
+  }
 });
 
 app.get("/streams/all", async (req, res) => {
   if (req.query.key !== API_KEY) return res.status(401).send("No autorizado");
-  // Eliminado el filtro de status "online" para Todas las Señales
   const streams = await collection.find({ category: "Todas las Señales" }).sort({ createdAt: 1 }).toArray();
   res.json(streams);
 });
@@ -109,7 +112,6 @@ app.get("/streams/all", async (req, res) => {
 app.get("/streams/category", async (req, res) => {
   if (req.query.key !== API_KEY) return res.status(401).send("No autorizado");
   const cat = req.query.name;
-  // Eliminado el filtro de status "online" para Categorías
   const streams = await collection.find({ category: cat }).sort({ createdAt: 1 }).toArray();
   res.json(streams);
 });
@@ -122,6 +124,7 @@ app.post("/addBulk", async (req, res) => {
   if (!list || list.trim() === "") return res.redirect(`/admin?key=${API_KEY}`);
 
   let finalCat = category;
+  // CAMBIO CLAVE: Sincronización de nombres para evitar errores de vinculación
   if (category === "CANALES DE TODAS LAS SEÑALES") finalCat = "Todas las Señales";
   if (category === "PANTALLA PRINCIPAL") finalCat = "Pantalla Principal";
   if (category === "LIBRERÍA DE RESPALDO") finalCat = "Librería de Respaldo";
@@ -225,7 +228,6 @@ app.get("/admin", async (req, res) => {
         .input-url { width: 100%; background: #0a0a0a; border: 1px solid #333; color: #ccc; padding: 8px; border-radius: 4px; }
         .cat-badge { font-size: 10px; background: #333; padding: 2px 6px; border-radius: 10px; color: #aaa; }
         .btn-danger-all { background: var(--danger); color: white; border: none; padding: 8px 15px; border-radius: 5px; cursor: pointer; font-weight: bold; margin-bottom: 15px; }
-        .cat-readonly { background: #111; color: var(--primary); border: 1px solid #333; padding: 10px; flex: 1; border-radius: 4px; font-weight: bold; }
         .btn-toggle { background: #444; border: 1px solid #666; color: white; padding: 10px 20px; border-radius: 8px; cursor: pointer; font-weight: bold; }
         .btn-toggle.active { background: var(--success); }
         .btn-add-here { width: 100%; background: transparent; border: none; color: #ffeb3b; font-size: 20px; cursor: pointer; }
@@ -318,11 +320,9 @@ app.get("/admin", async (req, res) => {
         function filterCat(cat, btn) {
           document.querySelectorAll('.cat-filter-btn').forEach(b => b.style.background = "#333");
           btn.style.background = "var(--primary)";
-          
           document.getElementById('bulk-cat-section').style.display = 'block';
           document.getElementById('current-cat-name').innerText = cat;
           document.getElementById('hidden-cat-value').value = cat;
-
           document.getElementById('cat-actions').style.display = 'block';
           document.getElementById('btnDelCat').onclick = () => borrarMasivo('category', cat);
           
@@ -371,6 +371,18 @@ app.get("/admin", async (req, res) => {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ filterType: type, filterValue: value })
+          });
+          location.reload();
+        }
+
+        async function insertarAqui(targetId) {
+          const name = prompt("Nombre del canal:");
+          const url = prompt("URL del canal:");
+          if (!name || !url) return;
+          await fetch("/insertAt?key=" + API_KEY, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ targetId, name, url })
           });
           location.reload();
         }

@@ -90,31 +90,31 @@ async function checkStreams() {
   setInterval(checkStreams, 15000); 
 })();
 
-// --- NUEVOS ENDPOINTS PARA LA APP ANDROID ---
+// --- ENDPOINTS PARA LA APP ANDROID (AHORA MUESTRAN TODOS LOS ESTADOS) ---
 
-// Obtener canales de la Pantalla Principal
 app.get("/streams", async (req, res) => {
   if (req.query.key !== API_KEY) return res.status(401).send("No autorizado");
-  const streams = await collection.find({ category: "Pantalla Principal", status: "online" }).sort({ createdAt: 1 }).toArray();
+  // Eliminado el filtro de status "online" para mostrar todo en la Pantalla Principal
+  const streams = await collection.find({ category: "Pantalla Principal" }).sort({ createdAt: 1 }).toArray();
   res.json(streams);
 });
 
-// Obtener canales de Todas las Señales
 app.get("/streams/all", async (req, res) => {
   if (req.query.key !== API_KEY) return res.status(401).send("No autorizado");
-  const streams = await collection.find({ category: "Todas las Señales", status: "online" }).sort({ createdAt: 1 }).toArray();
+  // Eliminado el filtro de status "online" para Todas las Señales
+  const streams = await collection.find({ category: "Todas las Señales" }).sort({ createdAt: 1 }).toArray();
   res.json(streams);
 });
 
-// Obtener canales por Categoría (Cine, Deportes, etc.)
 app.get("/streams/category", async (req, res) => {
   if (req.query.key !== API_KEY) return res.status(401).send("No autorizado");
   const cat = req.query.name;
-  const streams = await collection.find({ category: cat, status: "online" }).sort({ createdAt: 1 }).toArray();
+  // Eliminado el filtro de status "online" para Categorías
+  const streams = await collection.find({ category: cat }).sort({ createdAt: 1 }).toArray();
   res.json(streams);
 });
 
-// --- ENDPOINTS ADMINISTRATIVOS (TU PANEL) ---
+// --- ENDPOINTS ADMINISTRATIVOS ---
 
 app.post("/addBulk", async (req, res) => {
   if (req.query.key !== API_KEY) return res.status(401).send("No autorizado");

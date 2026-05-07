@@ -90,32 +90,7 @@ async function checkStreams() {
   setInterval(checkStreams, 15000); 
 })();
 
-// --- NUEVOS ENDPOINTS PARA LA APP ANDROID ---
-
-// Obtener canales de la Pantalla Principal
-app.get("/streams", async (req, res) => {
-  if (req.query.key !== API_KEY) return res.status(401).send("No autorizado");
-  const streams = await collection.find({ category: "Pantalla Principal", status: "online" }).sort({ createdAt: 1 }).toArray();
-  res.json(streams);
-});
-
-// Obtener canales de Todas las Señales
-app.get("/streams/all", async (req, res) => {
-  if (req.query.key !== API_KEY) return res.status(401).send("No autorizado");
-  const streams = await collection.find({ category: "Todas las Señales", status: "online" }).sort({ createdAt: 1 }).toArray();
-  res.json(streams);
-});
-
-// Obtener canales por Categoría (Cine, Deportes, etc.)
-app.get("/streams/category", async (req, res) => {
-  if (req.query.key !== API_KEY) return res.status(401).send("No autorizado");
-  const cat = req.query.name;
-  const streams = await collection.find({ category: cat, status: "online" }).sort({ createdAt: 1 }).toArray();
-  res.json(streams);
-});
-
-// --- ENDPOINTS ADMINISTRATIVOS (TU PANEL) ---
-
+// --- ENDPOINTS ---
 app.post("/addBulk", async (req, res) => {
   if (req.query.key !== API_KEY) return res.status(401).send("No autorizado");
   const { list, category } = req.body;
@@ -147,6 +122,7 @@ app.post("/addBulk", async (req, res) => {
   res.redirect(`/admin?key=${API_KEY}`);
 });
 
+// Los demás endpoints (insertAt, update, deleteStream, deleteAll) se mantienen igual que en tu código original...
 app.post("/insertAt", async (req, res) => {
   if (req.query.key !== API_KEY) return res.status(401).send("No autorizado");
   const { targetId, name, url } = req.body;
@@ -272,8 +248,8 @@ app.get("/admin", async (req, res) => {
           ${categoriasFijas.map(cat => `<button class="nav-btn cat-filter-btn" style="font-size:12px;" onclick="filterCat('${cat}', this)">${cat}</button>`).join('')}
         </div>
         <div id="cat-actions" style="display:none">
-            <button class="btn-danger-all" id="btnDelCat">🗑 Limpiar Categoría</button>
-            <table id="cat-table-body"></table>
+           <button class="btn-danger-all" id="btnDelCat">🗑 Limpiar Categoría</button>
+           <table id="cat-table-body"></table>
         </div>
       </div>
 
@@ -319,6 +295,7 @@ app.get("/admin", async (req, res) => {
           document.querySelectorAll('.cat-filter-btn').forEach(b => b.style.background = "#333");
           btn.style.background = "var(--primary)";
           
+          // Mostrar carga masiva específica para esta categoría
           document.getElementById('bulk-cat-section').style.display = 'block';
           document.getElementById('current-cat-name').innerText = cat;
           document.getElementById('hidden-cat-value').value = cat;

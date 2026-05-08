@@ -36,138 +36,90 @@ async function checkStreams() {
   checking = true;
   try {
     const streams = await collection.find().toArray();
-    
-    // --- PASO 1: Verificar estado de salud ---
     await Promise.all(streams.map(async (stream) => {
       let status = "offline";
       try {
-        await axios.head(stream.url, { 
-          timeout: 2500, 
-          headers: { "User-Agent": "Mozilla/5.0" },
-          validateStatus: (s) => s < 400 
-        });
+        await axios.head(stream.url, { timeout: 2500, headers: { "User-Agent": "Mozilla/5.0" }, validateStatus: (s) => s < 400 });
         status = "online";
       } catch {
         try {
-          await axios.get(stream.url, { 
-            timeout: 3000, 
-            headers: { "User-Agent": "Mozilla/5.0" }, 
-            validateStatus: (s) => s === 200 || s === 206 
-          });
+          await axios.get(stream.url, { timeout: 3000, headers: { "User-Agent": "Mozilla/5.0" }, validateStatus: (s) => s === 200 || s === 206 });
           status = "online";
         } catch { status = "offline"; }
       }
-
-      // CAMBIO REALIZADO: Se eliminó el bloque que ejecutaba collection.deleteOne
-      // Ahora el sistema solo actualiza el estado (online/offline) pero NO borra nada.
       if (stream.status !== status) {
         await collection.updateOne({ _id: stream._id }, { $set: { status } });
         stream.status = status;
       }
     }));
 
-    // --- PASO 2: Autorrecuperación con Jerarquía Pro ---
     const updatedStreams = await collection.find().toArray();
     const libPrincipal = updatedStreams.filter(s => s.category === "Librería Principal" && s.status === "online");
     const libEmergencia = updatedStreams.filter(s => s.category === "Librería de Emergencia" && s.status === "online");
 
     for (const stream of updatedStreams) {
       if (stream.category === "Librería Principal" || stream.category === "Librería de Emergencia") continue;
-
       const escapedName = stream.name.trim().toLowerCase();
       const backupPrincipal = libPrincipal.find(l => l.name.trim().toLowerCase() === escapedName);
       const backupEmergencia = libEmergencia.find(l => l.name.trim().toLowerCase() === escapedName);
-
       let targetUrl = null;
-
       if (stream.status === "offline") {
         if (backupPrincipal) targetUrl = backupPrincipal.url;
         else if (backupEmergencia) targetUrl = backupEmergencia.url;
-      } 
-      else if (backupPrincipal && stream.url !== backupPrincipal.url) {
+      } else if (backupPrincipal && stream.url !== backupPrincipal.url) {
         targetUrl = backupPrincipal.url;
       }
-
       if (targetUrl && stream.url !== targetUrl) {
         await collection.updateOne({ _id: stream._id }, { $set: { url: targetUrl, status: "online" } });
-        console.log(`🔄 [Jerarquía Pro] Canal "${stream.name}" actualizado a la mejor fuente disponible.`);
       }
     }
   } catch (e) { console.error("Error en checker:", e); }
   checking = false;
 }
 
-(async () => {
-  await conectarDB();
-  setInterval(checkStreams, 15000); 
-})();
+(async () => { await conectarDB(); setInterval(checkStreams, 15000); })();
 
-// --- ENDPOINTS PARA LA APP ANDROID ---
-
+// --- ENDPOINTS APP ---
 app.get("/streams", async (req, res) => {
   if (req.query.key !== API_KEY) return res.status(401).send("No autorizado");
-  try {
-    const streams = await collection.find({ category: "Pantalla Principal" }).sort({ createdAt: 1 }).toArray();
-    res.json(streams || []);
-  } catch (e) { res.status(500).json([]); }
+  const streams = await collection.find({ category: "Pantalla Principal" }).sort({ createdAt: 1 }).toArray();
+  res.json(streams || []);
 });
-
 app.get("/streams/all", async (req, res) => {
   if (req.query.key !== API_KEY) return res.status(401).send("No autorizado");
   const streams = await collection.find({ category: "Todas las Señales" }).sort({ createdAt: 1 }).toArray();
   res.json(streams);
 });
-
 app.get("/streams/category", async (req, res) => {
   if (req.query.key !== API_KEY) return res.status(401).send("No autorizado");
-  const cat = req.query.name;
-  const streams = await collection.find({ category: cat }).sort({ createdAt: 1 }).toArray();
+  const streams = await collection.find({ category: req.query.name }).sort({ createdAt: 1 }).toArray();
   res.json(streams);
 });
 
-// --- ENDPOINTS ADMINISTRATIVOS ---
-
-app.post("/addBulk", async (req, res) => {
-  if (req.query.key !== API_KEY) return res.status(401).send("No autorizado");
-  const { list, category } = req.body;
-  if (!list || list.trim() === "") return res.redirect(`/admin?key=${API_KEY}`);
-
-  let finalCat = category;
-  if (category === "CANALES DE TODAS LAS SEÑALES") finalCat = "Todas las Señales";
-  if (category === "PANTALLA PRINCIPAL") finalCat = "Pantalla Principal";
-  if (category === "LIBRERIA PRINCIPAL") finalCat = "Librería Principal";
-  if (category === "LIBRERIA EMERGENCIA") finalCat = "Librería de Emergencia";
-
-  const lines = list.split("\n");
-  const toInsert = [];
-  const baseTime = Date.now();
-  lines.forEach((line, index) => {
-    const parts = line.split(",");
-    if (parts.length >= 2) {
-      const channelName = parts[0].trim();
-      toInsert.push({
-        name: channelName,
-        url: parts[1].trim(),
-        logo: generateLogoUrl(channelName),
-        category: finalCat, 
-        status: "pending", 
-        createdAt: new Date(baseTime + index)
-      });
+// --- NUEVO: INSERTAR AL PRINCIPIO ---
+app.post("/insertFirst", async (req, res) => {
+    if (req.query.key !== API_KEY) return res.status(401).send("No autorizado");
+    const { name, url, category } = req.body;
+    const firstStream = await collection.find({ category }).sort({ createdAt: 1 }).limit(1).toArray();
+    let newTime;
+    if (firstStream.length > 0) {
+        newTime = new Date(new Date(firstStream[0].createdAt).getTime() - 1000);
+    } else {
+        newTime = new Date();
     }
-  });
-  if (toInsert.length > 0) await collection.insertMany(toInsert);
-  res.redirect(`/admin?key=${API_KEY}`);
+    await collection.insertOne({
+        name, url, logo: generateLogoUrl(name), category, status: "pending", createdAt: newTime
+    });
+    res.json({ ok: true });
 });
 
+// --- INSERTAR ENTRE CANALES (FIJADO) ---
 app.post("/insertAt", async (req, res) => {
   if (req.query.key !== API_KEY) return res.status(401).send("No autorizado");
   const { targetId, name, url } = req.body;
   const targetStream = await collection.findOne({ _id: new ObjectId(targetId) });
   if (!targetStream) return res.status(404).send("Referencia no encontrada");
-  const nextStream = await collection.find({ 
-    category: targetStream.category, 
-    createdAt: { $gt: targetStream.createdAt } 
-  }).sort({ createdAt: 1 }).limit(1).toArray();
+  const nextStream = await collection.find({ category: targetStream.category, createdAt: { $gt: targetStream.createdAt } }).sort({ createdAt: 1 }).limit(1).toArray();
   let newTimeValue;
   const timeA = new Date(targetStream.createdAt).getTime();
   if (nextStream.length > 0) {
@@ -176,21 +128,36 @@ app.post("/insertAt", async (req, res) => {
   } else {
     newTimeValue = timeA + 1000;
   }
-  await collection.insertOne({
-    name, 
-    url, 
-    logo: generateLogoUrl(name), 
-    category: targetStream.category, 
-    status: "pending", 
-    createdAt: new Date(newTimeValue)
-  });
+  await collection.insertOne({ name, url, logo: generateLogoUrl(name), category: targetStream.category, status: "pending", createdAt: new Date(newTimeValue) });
   res.json({ ok: true });
+});
+
+app.post("/addBulk", async (req, res) => {
+  if (req.query.key !== API_KEY) return res.status(401).send("No autorizado");
+  const { list, category } = req.body;
+  let finalCat = category;
+  if (category === "CANALES DE TODAS LAS SEÑALES") finalCat = "Todas las Señales";
+  if (category === "PANTALLA PRINCIPAL") finalCat = "Pantalla Principal";
+  if (category === "LIBRERIA PRINCIPAL") finalCat = "Librería Principal";
+  if (category === "LIBRERIA EMERGENCIA") finalCat = "Librería de Emergencia";
+  const lines = list.split("\n");
+  const toInsert = [];
+  const baseTime = Date.now();
+  lines.forEach((line, index) => {
+    const parts = line.split(",");
+    if (parts.length >= 2) {
+      const channelName = parts[0].trim();
+      toInsert.push({ name: channelName, url: parts[1].trim(), logo: generateLogoUrl(channelName), category: finalCat, status: "pending", createdAt: new Date(baseTime + index) });
+    }
+  });
+  if (toInsert.length > 0) await collection.insertMany(toInsert);
+  res.redirect(`/admin?key=${API_KEY}`);
 });
 
 app.post("/update", async (req, res) => {
   if (req.query.key !== API_KEY) return res.status(401).send("No autorizado");
   const { id, url, name } = req.body;
-  const updateData = { url: url, status: "pending" }; 
+  const updateData = { url, status: "pending" };
   if (name) { updateData.name = name; updateData.logo = generateLogoUrl(name); }
   await collection.updateOne({ _id: new ObjectId(id) }, { $set: updateData });
   res.json({ ok: true });
@@ -198,8 +165,7 @@ app.post("/update", async (req, res) => {
 
 app.post("/deleteStream", async (req, res) => {
   if (req.query.key !== API_KEY) return res.status(401).send("No autorizado");
-  const { id } = req.body;
-  await collection.deleteOne({ _id: new ObjectId(id) });
+  await collection.deleteOne({ _id: new ObjectId(req.body.id) });
   res.json({ ok: true });
 });
 
@@ -222,15 +188,23 @@ app.get("/admin", async (req, res) => {
     const streams = await collection.find().sort({ createdAt: 1 }).toArray();
     const categoriasFijas = ["Cine", "Radio", "Infantiles", "Entretenimiento", "Deportes", "Nacionales"];
 
-    const renderRowSimple = (s) => `
-    <tr class="add-row"><td colspan="5" style="padding:0;"><button class="btn-add-here" onclick="insertarAqui('${s._id}')">+</button></td></tr>
-    <tr id="row-${s._id}">
-      <td width="30">${s.status === 'online' ? '🟢' : s.status === 'offline' ? '🔴' : '⚫'}</td>
-      <td width="50"><img src="${s.logo || ''}" onerror="this.src='https://cdn-icons-png.flaticon.com/512/3172/3172551.png'" style="width:45px;height:45px;border-radius:8px;object-fit:contain;background:#000;border:1px solid #333;"></td>
-      <td width="180"><input class="input-url" id="name-${s._id}" value="${s.name}" style="font-weight:bold;"><br/><span class="cat-badge">${s.category}</span></td>
-      <td><input class="input-url" id="url-${s._id}" value="${s.url}"></td>
-      <td width="100"><button class="btn-play" onclick="guardar('${s._id}')">💾</button><button class="btn-play" style="background:var(--danger)" onclick="eliminar('${s._id}')">❌</button></td>
-    </tr>`;
+    const renderTable = (catName, filterKey) => {
+        const filtered = streams.filter(s => s.category === catName);
+        return `
+        <button class="btn-add-here" onclick="insertarPrimero('${catName}')">➕ INSERTAR AL INICIO DE ESTA SECCIÓN</button>
+        <table>
+            ${filtered.map(s => `
+                <tr class="add-row"><td colspan="5" style="padding:0;"><button class="btn-add-here" onclick="insertarAqui('${s._id}')">+</button></td></tr>
+                <tr id="row-${s._id}">
+                    <td width="30">${s.status === 'online' ? '🟢' : s.status === 'offline' ? '🔴' : '⚫'}</td>
+                    <td width="50"><img src="${s.logo || ''}" onerror="this.src='https://cdn-icons-png.flaticon.com/512/3172/3172551.png'" style="width:45px;height:45px;border-radius:8px;object-fit:contain;background:#000;border:1px solid #333;"></td>
+                    <td width="180"><input class="input-url" id="name-${s._id}" value="${s.name}" style="font-weight:bold;"><br/><span class="cat-badge">${s.category}</span></td>
+                    <td><input class="input-url" id="url-${s._id}" value="${s.url}"></td>
+                    <td width="100"><button class="btn-play" onclick="guardar('${s._id}')">💾</button><button class="btn-play" style="background:var(--danger)" onclick="eliminar('${s._id}')">❌</button></td>
+                </tr>
+            `).join('')}
+        </table>`;
+    };
 
     let html = `
     <!DOCTYPE html>
@@ -256,7 +230,8 @@ app.get("/admin", async (req, res) => {
         .btn-danger-all { background: var(--danger); color: white; border: none; padding: 8px 15px; border-radius: 5px; cursor: pointer; font-weight: bold; margin-bottom: 15px; }
         .btn-toggle { background: #444; border: 1px solid #666; color: white; padding: 10px 20px; border-radius: 8px; cursor: pointer; font-weight: bold; }
         .btn-toggle.active { background: var(--success); }
-        .btn-add-here { width: 100%; background: transparent; border: none; color: var(--warn); font-size: 20px; cursor: pointer; }
+        .btn-add-here { width: 100%; background: rgba(255,255,255,0.05); border: 1px dashed #444; color: var(--warn); font-size: 14px; padding: 5px; cursor: pointer; margin: 5px 0; }
+        .btn-add-here:hover { background: rgba(255,235,59,0.1); }
       </style>
     </head>
     <body>
@@ -275,73 +250,33 @@ app.get("/admin", async (req, res) => {
       </div>
 
       <div id="view-all" class="view-container active">
-        <div class="bulk-section">
-          <h4>➕ Carga Masiva (Todas las Señales)</h4>
-          <form method="POST" action="/addBulk?key=${API_KEY}">
-            <textarea name="list" rows="2" placeholder="Nombre, URL"></textarea>
-            <input type="hidden" name="category" value="CANALES DE TODAS LAS SEÑALES">
-            <button class="nav-btn" style="background:var(--success); margin-top:10px;">Agregar</button>
-          </form>
-        </div>
         <button class="btn-danger-all" onclick="borrarMasivo('all')">🗑 Limpiar Sección</button>
-        <table>${streams.filter(s => s.category === "Todas las Señales").map(s => renderRowSimple(s)).join('')}</table>
+        ${renderTable("Todas las Señales")}
       </div>
 
       <div id="view-categories" class="view-container">
-        <div class="bulk-section" id="bulk-cat-section" style="display:none;">
-          <h4 id="current-cat-header"></h4>
-          <form method="POST" action="/addBulk?key=${API_KEY}">
-            <textarea name="list" rows="2" placeholder="Nombre, URL"></textarea>
-            <input type="hidden" name="category" id="hidden-cat-value">
-            <button class="nav-btn" style="background:var(--success); margin-top:10px;">Agregar</button>
-          </form>
-        </div>
         <div style="margin-bottom:15px; display:flex; gap:8px; flex-wrap:wrap;">
           ${categoriasFijas.map(cat => `<button class="nav-btn cat-filter-btn" style="font-size:12px;" onclick="filterCat('${cat}', this)">${cat}</button>`).join('')}
         </div>
         <div id="cat-actions" style="display:none">
             <button class="btn-danger-all" id="btnDelCat">🗑 Limpiar Categoría</button>
-            <table id="cat-table-body"></table>
+            <div id="cat-table-body"></div>
         </div>
       </div>
 
       <div id="view-main" class="view-container">
-        <div class="bulk-section">
-          <h4>➕ Carga Masiva (Pantalla Principal)</h4>
-          <form method="POST" action="/addBulk?key=${API_KEY}">
-            <textarea name="list" rows="2" placeholder="Nombre, URL"></textarea>
-            <input type="hidden" name="category" value="PANTALLA PRINCIPAL">
-            <button class="nav-btn" style="background:var(--success); margin-top:10px;">Agregar</button>
-          </form>
-        </div>
         <button class="btn-danger-all" onclick="borrarMasivo('main')">🗑 Limpiar Pantalla Principal</button>
-        <table>${streams.filter(s => s.category === "Pantalla Principal").map(s => renderRowSimple(s)).join('')}</table>
+        ${renderTable("Pantalla Principal")}
       </div>
 
       <div id="view-lib-p" class="view-container">
-        <div class="bulk-section" style="border-left-color:var(--warn)">
-          <h4>⭐ Carga Masiva (Librería Principal)</h4>
-          <form method="POST" action="/addBulk?key=${API_KEY}">
-            <textarea name="list" rows="2" placeholder="Nombre, URL"></textarea>
-            <input type="hidden" name="category" value="LIBRERIA PRINCIPAL">
-            <button class="nav-btn" style="background:var(--success); margin-top:10px;">Agregar</button>
-          </form>
-        </div>
         <button class="btn-danger-all" onclick="borrarMasivo('lib_p')">🗑 Limpiar Librería Principal</button>
-        <table>${streams.filter(s => s.category === "Librería Principal").map(s => renderRowSimple(s)).join('')}</table>
+        ${renderTable("Librería Principal")}
       </div>
 
       <div id="view-lib-e" class="view-container">
-        <div class="bulk-section" style="border-left-color:#00e5ff">
-          <h4>🆘 Carga Masiva (Librería Emergencia)</h4>
-          <form method="POST" action="/addBulk?key=${API_KEY}">
-            <textarea name="list" rows="2" placeholder="Nombre, URL"></textarea>
-            <input type="hidden" name="category" value="LIBRERIA EMERGENCIA">
-            <button class="nav-btn" style="background:var(--success); margin-top:10px;">Agregar</button>
-          </form>
-        </div>
         <button class="btn-danger-all" onclick="borrarMasivo('lib_e')">🗑 Limpiar Librería Emergencia</button>
-        <table>${streams.filter(s => s.category === "Librería de Emergencia").map(s => renderRowSimple(s)).join('')}</table>
+        ${renderTable("Librería de Emergencia")}
       </div>
 
       <script>
@@ -359,77 +294,63 @@ app.get("/admin", async (req, res) => {
         function filterCat(cat, btn) {
           document.querySelectorAll('.cat-filter-btn').forEach(b => b.style.background = "#333");
           btn.style.background = "var(--primary)";
-          document.getElementById('bulk-cat-section').style.display = 'block';
-          document.getElementById('current-cat-header').innerText = "➕ Carga Masiva (" + cat + ")";
-          document.getElementById('hidden-cat-value').value = cat;
           document.getElementById('cat-actions').style.display = 'block';
           document.getElementById('btnDelCat').onclick = () => borrarMasivo('category', cat);
           
           const filtered = allStreams.filter(s => s.category === cat);
-          document.getElementById('cat-table-body').innerHTML = filtered.map(s => {
-            let icon = s.status === 'online' ? '🟢' : s.status === 'offline' ? '🔴' : '⚫';
-            return \`
-            <tr class="add-row"><td colspan="5" style="padding:0;"><button class="btn-add-here" onclick="insertarAqui('\${s._id}')">+</button></td></tr>
-            <tr>
-              <td>\${icon}</td>
-              <td><img src="\${s.logo}" style="width:40px;height:40px;object-fit:contain;background:#000;border-radius:5px;"></td>
-              <td><input class="input-url" id="name-\${s._id}" value="\${s.name}"></td>
-              <td><input class="input-url" id="url-\${s._id}" value="\${s.url}"></td>
-              <td width="100">
-                <button class="btn-play" onclick="guardar('\${s._id}')">💾</button>
-                <button class="btn-play" style="background:var(--danger)" onclick="eliminar('\${s._id}')">❌</button>
-              </td>
-            </tr>\`;
-          }).join('');
+          document.getElementById('cat-table-body').innerHTML = \`
+            <button class="btn-add-here" onclick="insertarPrimero('\${cat}')">➕ INSERTAR AL INICIO DE \${cat}</button>
+            <table>
+                \${filtered.map(s => \`
+                    <tr class="add-row"><td colspan="5" style="padding:0;"><button class="btn-add-here" onclick="insertarAqui('\${s._id}')">+</button></td></tr>
+                    <tr>
+                        <td>\${s.status === 'online' ? '🟢' : '🔴'}</td>
+                        <td><img src="\${s.logo}" style="width:40px;height:40px;object-fit:contain;background:#000;border-radius:5px;"></td>
+                        <td><input class="input-url" id="name-\${s._id}" value="\${s.name}"></td>
+                        <td><input class="input-url" id="url-\${s._id}" value="\${s.url}"></td>
+                        <td width="100">
+                            <button class="btn-play" onclick="guardar('\${s._id}')">💾</button>
+                            <button class="btn-play" style="background:var(--danger)" onclick="eliminar('\${s._id}')">❌</button>
+                        </td>
+                    </tr>\`).join('')}
+            </table>\`;
         }
 
         async function guardar(id) {
           const url = document.getElementById("url-" + id).value;
           const name = document.getElementById("name-" + id).value;
-          await fetch("/update?key=" + API_KEY, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ id, url, name })
-          });
+          await fetch("/update?key=" + API_KEY, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id, url, name }) });
           location.reload();
         }
 
         async function eliminar(id) {
           if(!confirm("¿Eliminar?")) return;
-          await fetch("/deleteStream?key=" + API_KEY, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ id })
-          });
+          await fetch("/deleteStream?key=" + API_KEY, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id }) });
           location.reload();
         }
 
         async function borrarMasivo(type, value = '') {
           if (!confirm("¿Borrar sección?")) return;
-          await fetch("/deleteAll?key=" + API_KEY, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ filterType: type, filterValue: value })
-          });
+          await fetch("/deleteAll?key=" + API_KEY, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ filterType: type, filterValue: value }) });
           location.reload();
         }
 
         async function insertarAqui(targetId) {
-          const name = prompt("Nombre del canal:");
-          const url = prompt("URL del canal:");
+          const name = prompt("Nombre:"); const url = prompt("URL:");
           if (!name || !url) return;
-          await fetch("/insertAt?key=" + API_KEY, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ targetId, name, url })
-          });
+          await fetch("/insertAt?key=" + API_KEY, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ targetId, name, url }) });
           location.reload();
         }
 
+        async function insertarPrimero(category) {
+            const name = prompt("Nombre (Nuevo #1):"); const url = prompt("URL:");
+            if (!name || !url) return;
+            await fetch("/insertFirst?key=" + API_KEY, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name, url, category }) });
+            location.reload();
+        }
+
         function toggleAutoRefresh() {
-          autoRefresh = !autoRefresh;
-          localStorage.setItem("iptv_refresh", autoRefresh);
-          location.reload();
+          autoRefresh = !autoRefresh; localStorage.setItem("iptv_refresh", autoRefresh); location.reload();
         }
 
         if (autoRefresh) {
@@ -445,4 +366,4 @@ app.get("/admin", async (req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log("🚀 Sistema Blindado Jerárquico PRO Online"));
+app.listen(PORT, () => console.log("🚀 Sistema Blindado con Inserción en Posición 1 Online"));

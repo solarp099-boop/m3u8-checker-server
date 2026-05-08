@@ -171,12 +171,38 @@ app.post("/addBulk", async (req, res) => {
 app.post("/insertAt", async (req, res) => {
   if (req.query.key !== API_KEY) return res.status(401).send("No autorizado");
   const { targetId, name, url } = req.body;
+
+  // 1. Obtener el canal de referencia (el de arriba del botón "+")
   const targetStream = await collection.findOne({ _id: new ObjectId(targetId) });
   if (!targetStream) return res.status(404).send("Referencia no encontrada");
-  const newTime = new Date(new Date(targetStream.createdAt).getTime() - 1);
+
+  // 2. Buscar el canal que está inmediatamente después en la misma categoría
+  const nextStream = await collection.find({ 
+    category: targetStream.category, 
+    createdAt: { $gt: targetStream.createdAt } 
+  }).sort({ createdAt: 1 }).limit(1).toArray();
+
+  let newTimeValue;
+  const timeA = new Date(targetStream.createdAt).getTime();
+
+  if (nextStream.length > 0) {
+    // Si hay un canal abajo, calculamos el punto medio exacto
+    const timeB = new Date(nextStream[0].createdAt).getTime();
+    newTimeValue = timeA + (timeB - timeA) / 2;
+  } else {
+    // Si es el último de la lista, simplemente le sumamos tiempo para que aparezca al final
+    newTimeValue = timeA + 1000;
+  }
+
   await collection.insertOne({
-    name, url, logo: generateLogoUrl(name), category: targetStream.category, status: "pending", createdAt: newTime
+    name, 
+    url, 
+    logo: generateLogoUrl(name), 
+    category: targetStream.category, 
+    status: "pending", 
+    createdAt: new Date(newTimeValue)
   });
+
   res.json({ ok: true });
 });
 

@@ -37,7 +37,7 @@ async function checkStreams() {
   try {
     const streams = await collection.find().toArray();
     
-    // --- PASO 1: Verificar estado de salud y Limpieza de Librerías ---
+    // --- PASO 1: Verificar estado de salud ---
     await Promise.all(streams.map(async (stream) => {
       let status = "offline";
       try {
@@ -58,12 +58,8 @@ async function checkStreams() {
         } catch { status = "offline"; }
       }
 
-      // REGLA: Si es de librería y está offline, se elimina.
-      if (status === "offline" && (stream.category === "Librería Principal" || stream.category === "Librería de Emergencia")) {
-        await collection.deleteOne({ _id: stream._id });
-        return;
-      }
-
+      // CAMBIO REALIZADO: Se eliminó el bloque que ejecutaba collection.deleteOne
+      // Ahora el sistema solo actualiza el estado (online/offline) pero NO borra nada.
       if (stream.status !== status) {
         await collection.updateOne({ _id: stream._id }, { $set: { status } });
         stream.status = status;
@@ -76,23 +72,18 @@ async function checkStreams() {
     const libEmergencia = updatedStreams.filter(s => s.category === "Librería de Emergencia" && s.status === "online");
 
     for (const stream of updatedStreams) {
-      // Ignorar las propias librerías en el proceso de reemplazo
       if (stream.category === "Librería Principal" || stream.category === "Librería de Emergencia") continue;
 
       const escapedName = stream.name.trim().toLowerCase();
-      
       const backupPrincipal = libPrincipal.find(l => l.name.trim().toLowerCase() === escapedName);
       const backupEmergencia = libEmergencia.find(l => l.name.trim().toLowerCase() === escapedName);
 
       let targetUrl = null;
 
-      // LÓGICA DE PRIORIDAD:
-      // 1. Si el canal está caído, buscar en Principal, luego en Emergencia.
       if (stream.status === "offline") {
         if (backupPrincipal) targetUrl = backupPrincipal.url;
         else if (backupEmergencia) targetUrl = backupEmergencia.url;
       } 
-      // 2. Si el canal está online pero NO usa la URL de la Principal y ésta existe, actualizar a la Principal.
       else if (backupPrincipal && stream.url !== backupPrincipal.url) {
         targetUrl = backupPrincipal.url;
       }
@@ -171,29 +162,20 @@ app.post("/addBulk", async (req, res) => {
 app.post("/insertAt", async (req, res) => {
   if (req.query.key !== API_KEY) return res.status(401).send("No autorizado");
   const { targetId, name, url } = req.body;
-
-  // 1. Obtener el canal de referencia (el de arriba del botón "+")
   const targetStream = await collection.findOne({ _id: new ObjectId(targetId) });
   if (!targetStream) return res.status(404).send("Referencia no encontrada");
-
-  // 2. Buscar el canal que está inmediatamente después en la misma categoría
   const nextStream = await collection.find({ 
     category: targetStream.category, 
     createdAt: { $gt: targetStream.createdAt } 
   }).sort({ createdAt: 1 }).limit(1).toArray();
-
   let newTimeValue;
   const timeA = new Date(targetStream.createdAt).getTime();
-
   if (nextStream.length > 0) {
-    // Si hay un canal abajo, calculamos el punto medio exacto
     const timeB = new Date(nextStream[0].createdAt).getTime();
     newTimeValue = timeA + (timeB - timeA) / 2;
   } else {
-    // Si es el último de la lista, simplemente le sumamos tiempo para que aparezca al final
     newTimeValue = timeA + 1000;
   }
-
   await collection.insertOne({
     name, 
     url, 
@@ -202,7 +184,6 @@ app.post("/insertAt", async (req, res) => {
     status: "pending", 
     createdAt: new Date(newTimeValue)
   });
-
   res.json({ ok: true });
 });
 

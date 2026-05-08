@@ -30,6 +30,7 @@ async function conectarDB() {
   } catch (e) { console.error("❌ Error MongoDB:", e); }
 }
 
+// --- LÓGICA DE AUTO-REEMPLAZO (JERARQUÍA DE BACKUP) ---
 let checking = false;
 async function checkStreams() {
   if (checking || !collection) return;
@@ -62,6 +63,7 @@ async function checkStreams() {
       const escapedName = stream.name.trim().toLowerCase();
       const backupPrincipal = libPrincipal.find(l => l.name.trim().toLowerCase() === escapedName);
       const backupEmergencia = libEmergencia.find(l => l.name.trim().toLowerCase() === escapedName);
+      
       let targetUrl = null;
       if (stream.status === "offline") {
         if (backupPrincipal) targetUrl = backupPrincipal.url;
@@ -79,21 +81,14 @@ async function checkStreams() {
 
 (async () => { await conectarDB(); setInterval(checkStreams, 15000); })();
 
-// --- ENDPOINTS ADMINISTRATIVOS ---
+// --- ENDPOINTS ---
 
 app.post("/insertFirst", async (req, res) => {
     if (req.query.key !== API_KEY) return res.status(401).send("No autorizado");
     const { name, url, category } = req.body;
     const firstStream = await collection.find({ category }).sort({ createdAt: 1 }).limit(1).toArray();
-    let newTime;
-    if (firstStream.length > 0) {
-        newTime = new Date(new Date(firstStream[0].createdAt).getTime() - 1000);
-    } else {
-        newTime = new Date();
-    }
-    await collection.insertOne({
-        name, url, logo: generateLogoUrl(name), category, status: "pending", createdAt: newTime
-    });
+    let newTime = firstStream.length > 0 ? new Date(new Date(firstStream[0].createdAt).getTime() - 1000) : new Date();
+    await collection.insertOne({ name, url, logo: generateLogoUrl(name), category, status: "pending", createdAt: newTime });
     res.json({ ok: true });
 });
 
@@ -103,26 +98,25 @@ app.post("/insertAt", async (req, res) => {
   const targetStream = await collection.findOne({ _id: new ObjectId(targetId) });
   if (!targetStream) return res.status(404).send("Referencia no encontrada");
   const nextStream = await collection.find({ category: targetStream.category, createdAt: { $gt: targetStream.createdAt } }).sort({ createdAt: 1 }).limit(1).toArray();
-  let newTimeValue;
   const timeA = new Date(targetStream.createdAt).getTime();
-  if (nextStream.length > 0) {
-    const timeB = new Date(nextStream[0].createdAt).getTime();
-    newTimeValue = timeA + (timeB - timeA) / 2;
-  } else {
-    newTimeValue = timeA + 1000;
-  }
+  let newTimeValue = nextStream.length > 0 ? timeA + (new Date(nextStream[0].createdAt).getTime() - timeA) / 2 : timeA + 1000;
   await collection.insertOne({ name, url, logo: generateLogoUrl(name), category: targetStream.category, status: "pending", createdAt: new Date(newTimeValue) });
   res.json({ ok: true });
 });
 
+// CORRECCIÓN AQUÍ: Mapeo exacto de nombres de categoría para Carga Masiva
 app.post("/addBulk", async (req, res) => {
   if (req.query.key !== API_KEY) return res.status(401).send("No autorizado");
   const { list, category } = req.body;
+  
   let finalCat = category;
-  if (category === "CANALES DE TODAS LAS SEÑALES") finalCat = "Todas las Señales";
-  if (category === "PANTALLA PRINCIPAL") finalCat = "Pantalla Principal";
-  if (category === "LIBRERIA PRINCIPAL") finalCat = "Librería Principal";
-  if (category === "LIBRERIA EMERGENCIA") finalCat = "Librería de Emergencia";
+  const upperCat = category.toUpperCase();
+
+  if (upperCat.includes("TODAS LAS SEÑALES")) finalCat = "Todas las Señales";
+  else if (upperCat.includes("PANTALLA PRINCIPAL")) finalCat = "Pantalla Principal";
+  else if (upperCat.includes("LIBRERIA PRINCIPAL") || upperCat.includes("LIBRERÍA PRINCIPAL")) finalCat = "Librería Principal";
+  else if (upperCat.includes("LIBRERIA EMERGENCIA") || upperCat.includes("LIBRERÍA DE EMERGENCIA")) finalCat = "Librería de Emergencia";
+
   const lines = list.split("\n");
   const toInsert = [];
   const baseTime = Date.now();
@@ -157,15 +151,15 @@ app.post("/deleteAll", async (req, res) => {
   const { filterType, filterValue } = req.body;
   let query = {};
   if (filterType === "category") query = { category: filterValue };
-  if (filterType === "main") query = { category: "Pantalla Principal" };
-  if (filterType === "all") query = { category: "Todas las Señales" };
-  if (filterType === "lib_p") query = { category: "Librería Principal" };
-  if (filterType === "lib_e") query = { category: "Librería de Emergencia" };
+  else if (filterType === "main") query = { category: "Pantalla Principal" };
+  else if (filterType === "all") query = { category: "Todas las Señales" };
+  else if (filterType === "lib_p") query = { category: "Librería Principal" };
+  else if (filterType === "lib_e") query = { category: "Librería de Emergencia" };
   await collection.deleteMany(query);
   res.json({ ok: true });
 });
 
-// --- INTERFAZ ADMINISTRATIVA ---
+// --- INTERFAZ ---
 
 app.get("/admin", async (req, res) => {
   if (req.query.key !== API_KEY) return res.send("No autorizado");
@@ -177,11 +171,11 @@ app.get("/admin", async (req, res) => {
         const filtered = streams.filter(s => s.category === catName);
         return `
         <div class="bulk-section">
-          <h4>➕ Carga Masiva (${bulkLabel})</h4>
+          <h4>➕ Carga Masiva (${catName})</h4>
           <form method="POST" action="/addBulk?key=${API_KEY}">
-            <textarea name="list" rows="2" placeholder="Nombre, URL"></textarea>
-            <input type="hidden" name="category" value="${bulkLabel.toUpperCase()}">
-            <button class="nav-btn" style="background:var(--success); margin-top:10px;">Agregar</button>
+            <textarea name="list" rows="2" placeholder="Nombre Canal, URL"></textarea>
+            <input type="hidden" name="category" value="${catName}">
+            <button class="nav-btn" style="background:var(--success); margin-top:10px;">Agregar a ${catName}</button>
           </form>
         </div>
         <button class="btn-danger-all" onclick="borrarMasivo('${catName === 'Pantalla Principal' ? 'main' : catName === 'Todas las Señales' ? 'all' : catName === 'Librería Principal' ? 'lib_p' : 'lib_e'}')">🗑 Limpiar Sección</button>
@@ -230,7 +224,7 @@ app.get("/admin", async (req, res) => {
     <body>
       <div class="header">
         <div style="display:flex; align-items:center; gap:20px;">
-          <h2 style="margin:0;">📺 IPTV Manager PRO</h2>
+          <h2 style="margin:0;">📺 IPTV Manager</h2>
           <button id="toggleBtn" class="btn-toggle" onclick="toggleAutoRefresh()">▶️ Auto-Refresh: OFF</button>
         </div>
         <div class="nav-menu">
@@ -243,16 +237,16 @@ app.get("/admin", async (req, res) => {
       </div>
 
       <div id="view-all" class="view-container active">
-        ${renderTable("Todas las Señales", "Canales de Todas las Señales")}
+        ${renderTable("Todas las Señales")}
       </div>
 
       <div id="view-categories" class="view-container">
         <div class="bulk-section" id="bulk-cat-section" style="display:none;">
           <h4 id="current-cat-header"></h4>
           <form method="POST" action="/addBulk?key=${API_KEY}">
-            <textarea name="list" rows="2" placeholder="Nombre, URL"></textarea>
+            <textarea name="list" rows="2" placeholder="Nombre Canal, URL"></textarea>
             <input type="hidden" name="category" id="hidden-cat-value">
-            <button class="nav-btn" style="background:var(--success); margin-top:10px;">Agregar</button>
+            <button class="nav-btn" style="background:var(--success); margin-top:10px;">Cargar en esta Categoría</button>
           </form>
         </div>
         <div style="margin-bottom:15px; display:flex; gap:8px; flex-wrap:wrap;">
@@ -266,15 +260,15 @@ app.get("/admin", async (req, res) => {
       </div>
 
       <div id="view-main" class="view-container">
-        ${renderTable("Pantalla Principal", "Pantalla Principal")}
+        ${renderTable("Pantalla Principal")}
       </div>
 
       <div id="view-lib-p" class="view-container">
-        ${renderTable("Librería Principal", "Librería Principal")}
+        ${renderTable("Librería Principal")}
       </div>
 
       <div id="view-lib-e" class="view-container">
-        ${renderTable("Librería de Emergencia", "Librería de Emergencia")}
+        ${renderTable("Librería de Emergencia")}
       </div>
 
       <script>
@@ -367,4 +361,4 @@ app.get("/admin", async (req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log("🚀 Sistema Completo con Carga Masiva e Inserción Flexible"));
+app.listen(PORT, () => console.log("🚀 Sistema con Carga Masiva corregida para Librerías"));

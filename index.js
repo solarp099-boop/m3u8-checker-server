@@ -81,7 +81,15 @@ async function checkStreams() {
 
 (async () => { await conectarDB(); setInterval(checkStreams, 15000); })();
 
-// --- ENDPOINTS ---
+// --- ENDPOINT PARA LA APP (ESTO FALTABA) ---
+app.get("/streams", async (req, res) => {
+  try {
+    const streams = await collection.find().sort({ createdAt: 1 }).toArray();
+    res.json(streams);
+  } catch (e) { res.status(500).send("Error"); }
+});
+
+// --- ENDPOINTS ADMINISTRATIVOS ---
 
 app.post("/insertFirst", async (req, res) => {
     if (req.query.key !== API_KEY) return res.status(401).send("No autorizado");
@@ -104,7 +112,6 @@ app.post("/insertAt", async (req, res) => {
   res.json({ ok: true });
 });
 
-// CORRECCIÓN AQUÍ: Mapeo exacto de nombres de categoría para Carga Masiva
 app.post("/addBulk", async (req, res) => {
   if (req.query.key !== API_KEY) return res.status(401).send("No autorizado");
   const { list, category } = req.body;
@@ -159,15 +166,14 @@ app.post("/deleteAll", async (req, res) => {
   res.json({ ok: true });
 });
 
-// --- INTERFAZ ---
-
+// --- INTERFAZ PANEL ---
 app.get("/admin", async (req, res) => {
   if (req.query.key !== API_KEY) return res.send("No autorizado");
   try {
     const streams = await collection.find().sort({ createdAt: 1 }).toArray();
     const categoriasFijas = ["Cine", "Radio", "Infantiles", "Entretenimiento", "Deportes", "Nacionales"];
 
-    const renderTable = (catName, bulkLabel) => {
+    const renderTable = (catName) => {
         const filtered = streams.filter(s => s.category === catName);
         return `
         <div class="bulk-section">
@@ -361,4 +367,4 @@ app.get("/admin", async (req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log("🚀 Sistema con Carga Masiva corregida para Librerías"));
+app.listen(PORT, () => console.log("🚀 Sistema con Carga Masiva corregida y App vinculada"));

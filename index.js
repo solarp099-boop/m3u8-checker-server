@@ -79,24 +79,8 @@ async function checkStreams() {
 
 (async () => { await conectarDB(); setInterval(checkStreams, 15000); })();
 
-// --- ENDPOINTS APP ---
-app.get("/streams", async (req, res) => {
-  if (req.query.key !== API_KEY) return res.status(401).send("No autorizado");
-  const streams = await collection.find({ category: "Pantalla Principal" }).sort({ createdAt: 1 }).toArray();
-  res.json(streams || []);
-});
-app.get("/streams/all", async (req, res) => {
-  if (req.query.key !== API_KEY) return res.status(401).send("No autorizado");
-  const streams = await collection.find({ category: "Todas las Señales" }).sort({ createdAt: 1 }).toArray();
-  res.json(streams);
-});
-app.get("/streams/category", async (req, res) => {
-  if (req.query.key !== API_KEY) return res.status(401).send("No autorizado");
-  const streams = await collection.find({ category: req.query.name }).sort({ createdAt: 1 }).toArray();
-  res.json(streams);
-});
+// --- ENDPOINTS ADMINISTRATIVOS ---
 
-// --- NUEVO: INSERTAR AL PRINCIPIO ---
 app.post("/insertFirst", async (req, res) => {
     if (req.query.key !== API_KEY) return res.status(401).send("No autorizado");
     const { name, url, category } = req.body;
@@ -113,7 +97,6 @@ app.post("/insertFirst", async (req, res) => {
     res.json({ ok: true });
 });
 
-// --- INSERTAR ENTRE CANALES (FIJADO) ---
 app.post("/insertAt", async (req, res) => {
   if (req.query.key !== API_KEY) return res.status(401).send("No autorizado");
   const { targetId, name, url } = req.body;
@@ -182,16 +165,27 @@ app.post("/deleteAll", async (req, res) => {
   res.json({ ok: true });
 });
 
+// --- INTERFAZ ADMINISTRATIVA ---
+
 app.get("/admin", async (req, res) => {
   if (req.query.key !== API_KEY) return res.send("No autorizado");
   try {
     const streams = await collection.find().sort({ createdAt: 1 }).toArray();
     const categoriasFijas = ["Cine", "Radio", "Infantiles", "Entretenimiento", "Deportes", "Nacionales"];
 
-    const renderTable = (catName, filterKey) => {
+    const renderTable = (catName, bulkLabel) => {
         const filtered = streams.filter(s => s.category === catName);
         return `
-        <button class="btn-add-here" onclick="insertarPrimero('${catName}')">➕ INSERTAR AL INICIO DE ESTA SECCIÓN</button>
+        <div class="bulk-section">
+          <h4>➕ Carga Masiva (${bulkLabel})</h4>
+          <form method="POST" action="/addBulk?key=${API_KEY}">
+            <textarea name="list" rows="2" placeholder="Nombre, URL"></textarea>
+            <input type="hidden" name="category" value="${bulkLabel.toUpperCase()}">
+            <button class="nav-btn" style="background:var(--success); margin-top:10px;">Agregar</button>
+          </form>
+        </div>
+        <button class="btn-danger-all" onclick="borrarMasivo('${catName === 'Pantalla Principal' ? 'main' : catName === 'Todas las Señales' ? 'all' : catName === 'Librería Principal' ? 'lib_p' : 'lib_e'}')">🗑 Limpiar Sección</button>
+        <button class="btn-add-here" onclick="insertarPrimero('${catName}')">➕ INSERTAR AL INICIO (#1)</button>
         <table>
             ${filtered.map(s => `
                 <tr class="add-row"><td colspan="5" style="padding:0;"><button class="btn-add-here" onclick="insertarAqui('${s._id}')">+</button></td></tr>
@@ -220,7 +214,7 @@ app.get("/admin", async (req, res) => {
         .nav-btn.active { background: var(--primary); }
         .view-container { display: none; background: var(--card); padding: 20px; border-radius: 12px; }
         .view-container.active { display: block; }
-        .bulk-section { background: #222; padding: 15px; border-radius: 8px; margin-bottom: 20px; border-left: 4px solid var(--primary); }
+        .bulk-section { background: #222; padding: 15px; border-radius: 8px; margin-bottom: 10px; border-left: 4px solid var(--primary); }
         textarea { width: 100%; background: #000; color: #0f0; border: 1px solid #444; padding: 10px; font-family: monospace; border-radius: 4px; resize: vertical; }
         table { width: 100%; border-collapse: collapse; }
         td { padding: 10px; border-bottom: 1px solid #2a2a2a; }
@@ -231,7 +225,6 @@ app.get("/admin", async (req, res) => {
         .btn-toggle { background: #444; border: 1px solid #666; color: white; padding: 10px 20px; border-radius: 8px; cursor: pointer; font-weight: bold; }
         .btn-toggle.active { background: var(--success); }
         .btn-add-here { width: 100%; background: rgba(255,255,255,0.05); border: 1px dashed #444; color: var(--warn); font-size: 14px; padding: 5px; cursor: pointer; margin: 5px 0; }
-        .btn-add-here:hover { background: rgba(255,235,59,0.1); }
       </style>
     </head>
     <body>
@@ -250,33 +243,38 @@ app.get("/admin", async (req, res) => {
       </div>
 
       <div id="view-all" class="view-container active">
-        <button class="btn-danger-all" onclick="borrarMasivo('all')">🗑 Limpiar Sección</button>
-        ${renderTable("Todas las Señales")}
+        ${renderTable("Todas las Señales", "Canales de Todas las Señales")}
       </div>
 
       <div id="view-categories" class="view-container">
+        <div class="bulk-section" id="bulk-cat-section" style="display:none;">
+          <h4 id="current-cat-header"></h4>
+          <form method="POST" action="/addBulk?key=${API_KEY}">
+            <textarea name="list" rows="2" placeholder="Nombre, URL"></textarea>
+            <input type="hidden" name="category" id="hidden-cat-value">
+            <button class="nav-btn" style="background:var(--success); margin-top:10px;">Agregar</button>
+          </form>
+        </div>
         <div style="margin-bottom:15px; display:flex; gap:8px; flex-wrap:wrap;">
-          ${categoriasFijas.map(cat => `<button class="nav-btn cat-filter-btn" style="font-size:12px;" onclick="filterCat('${cat}', this)">${cat}</button>`).join('')}
+          ${categoriasFijas.map(cat => `<button class="nav-btn cat-filter-btn" onclick="filterCat('${cat}', this)">${cat}</button>`).join('')}
         </div>
         <div id="cat-actions" style="display:none">
             <button class="btn-danger-all" id="btnDelCat">🗑 Limpiar Categoría</button>
+            <button class="btn-add-here" id="btnFirstCat">➕ INSERTAR AL INICIO (#1)</button>
             <div id="cat-table-body"></div>
         </div>
       </div>
 
       <div id="view-main" class="view-container">
-        <button class="btn-danger-all" onclick="borrarMasivo('main')">🗑 Limpiar Pantalla Principal</button>
-        ${renderTable("Pantalla Principal")}
+        ${renderTable("Pantalla Principal", "Pantalla Principal")}
       </div>
 
       <div id="view-lib-p" class="view-container">
-        <button class="btn-danger-all" onclick="borrarMasivo('lib_p')">🗑 Limpiar Librería Principal</button>
-        ${renderTable("Librería Principal")}
+        ${renderTable("Librería Principal", "Librería Principal")}
       </div>
 
       <div id="view-lib-e" class="view-container">
-        <button class="btn-danger-all" onclick="borrarMasivo('lib_e')">🗑 Limpiar Librería Emergencia</button>
-        ${renderTable("Librería de Emergencia")}
+        ${renderTable("Librería de Emergencia", "Librería de Emergencia")}
       </div>
 
       <script>
@@ -294,12 +292,15 @@ app.get("/admin", async (req, res) => {
         function filterCat(cat, btn) {
           document.querySelectorAll('.cat-filter-btn').forEach(b => b.style.background = "#333");
           btn.style.background = "var(--primary)";
+          document.getElementById('bulk-cat-section').style.display = 'block';
+          document.getElementById('current-cat-header').innerText = "➕ Carga Masiva (" + cat + ")";
+          document.getElementById('hidden-cat-value').value = cat;
           document.getElementById('cat-actions').style.display = 'block';
           document.getElementById('btnDelCat').onclick = () => borrarMasivo('category', cat);
+          document.getElementById('btnFirstCat').onclick = () => insertarPrimero(cat);
           
           const filtered = allStreams.filter(s => s.category === cat);
           document.getElementById('cat-table-body').innerHTML = \`
-            <button class="btn-add-here" onclick="insertarPrimero('\${cat}')">➕ INSERTAR AL INICIO DE \${cat}</button>
             <table>
                 \${filtered.map(s => \`
                     <tr class="add-row"><td colspan="5" style="padding:0;"><button class="btn-add-here" onclick="insertarAqui('\${s._id}')">+</button></td></tr>
@@ -366,4 +367,4 @@ app.get("/admin", async (req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log("🚀 Sistema Blindado con Inserción en Posición 1 Online"));
+app.listen(PORT, () => console.log("🚀 Sistema Completo con Carga Masiva e Inserción Flexible"));

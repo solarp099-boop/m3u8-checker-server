@@ -37,7 +37,7 @@ async function checkStreams() {
   try {
     const streams = await collection.find().toArray();
     
-    // --- PASO 1: Verificar estado de salud ---
+    // --- PASO 1: Verificar estado de salud y Limpieza de Librerías ---
     await Promise.all(streams.map(async (stream) => {
       let status = "offline";
       try {
@@ -57,39 +57,49 @@ async function checkStreams() {
           status = "online";
         } catch { status = "offline"; }
       }
+
+      // REGLA: Si es de librería y está offline, se elimina.
+      if (status === "offline" && (stream.category === "Librería Principal" || stream.category === "Librería de Emergencia")) {
+        await collection.deleteOne({ _id: stream._id });
+        return;
+      }
+
       if (stream.status !== status) {
         await collection.updateOne({ _id: stream._id }, { $set: { status } });
         stream.status = status;
       }
     }));
 
-    // --- PASO 2: Autorrecuperación Global (Afecta a todas las secciones) ---
+    // --- PASO 2: Autorrecuperación con Jerarquía Pro ---
     const updatedStreams = await collection.find().toArray();
-    for (const stream of updatedStreams) {
-      if (stream.category !== "Librería de Respaldo" && stream.status === "offline") {
-        const escapedName = stream.name.trim().replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
-        
-        // Buscamos si hay un reemplazo en la librería
-        const backup = await collection.findOne({
-          name: { $regex: new RegExp("^" + escapedName + "$", "i") },
-          category: "Librería de Respaldo",
-          status: "online"
-        }, { sort: { createdAt: 1 } });
+    const libPrincipal = updatedStreams.filter(s => s.category === "Librería Principal" && s.status === "online");
+    const libEmergencia = updatedStreams.filter(s => s.category === "Librería de Emergencia" && s.status === "online");
 
-        if (backup) {
-          // CAMBIO CLAVE: Actualizamos TODOS los canales con ese nombre en CUALQUIER categoría
-          await collection.updateMany(
-            { 
-              name: { $regex: new RegExp("^" + escapedName + "$", "i") },
-              category: { $ne: "Librería de Respaldo" } 
-            }, 
-            { $set: { url: backup.url, status: "online" } }
-          );
-          
-          // Consumimos el backup para que no se use infinitamente
-          await collection.deleteOne({ _id: backup._id });
-          console.log(`🟢 [Self-Healing Global] Canal "${stream.name}" recuperado en todas las secciones.`);
-        }
+    for (const stream of updatedStreams) {
+      // Ignorar las propias librerías en el proceso de reemplazo
+      if (stream.category === "Librería Principal" || stream.category === "Librería de Emergencia") continue;
+
+      const escapedName = stream.name.trim().toLowerCase();
+      
+      const backupPrincipal = libPrincipal.find(l => l.name.trim().toLowerCase() === escapedName);
+      const backupEmergencia = libEmergencia.find(l => l.name.trim().toLowerCase() === escapedName);
+
+      let targetUrl = null;
+
+      // LÓGICA DE PRIORIDAD:
+      // 1. Si el canal está caído, buscar en Principal, luego en Emergencia.
+      if (stream.status === "offline") {
+        if (backupPrincipal) targetUrl = backupPrincipal.url;
+        else if (backupEmergencia) targetUrl = backupEmergencia.url;
+      } 
+      // 2. Si el canal está online pero NO usa la URL de la Principal y ésta existe, actualizar a la Principal.
+      else if (backupPrincipal && stream.url !== backupPrincipal.url) {
+        targetUrl = backupPrincipal.url;
+      }
+
+      if (targetUrl && stream.url !== targetUrl) {
+        await collection.updateOne({ _id: stream._id }, { $set: { url: targetUrl, status: "online" } });
+        console.log(`🔄 [Jerarquía Pro] Canal "${stream.name}" actualizado a la mejor fuente disponible.`);
       }
     }
   } catch (e) { console.error("Error en checker:", e); }
@@ -134,7 +144,8 @@ app.post("/addBulk", async (req, res) => {
   let finalCat = category;
   if (category === "CANALES DE TODAS LAS SEÑALES") finalCat = "Todas las Señales";
   if (category === "PANTALLA PRINCIPAL") finalCat = "Pantalla Principal";
-  if (category === "LIBRERÍA DE RESPALDO") finalCat = "Librería de Respaldo";
+  if (category === "LIBRERIA PRINCIPAL") finalCat = "Librería Principal";
+  if (category === "LIBRERIA EMERGENCIA") finalCat = "Librería de Emergencia";
 
   const lines = list.split("\n");
   const toInsert = [];
@@ -192,7 +203,8 @@ app.post("/deleteAll", async (req, res) => {
   if (filterType === "category") query = { category: filterValue };
   if (filterType === "main") query = { category: "Pantalla Principal" };
   if (filterType === "all") query = { category: "Todas las Señales" };
-  if (filterType === "backup") query = { category: "Librería de Respaldo" };
+  if (filterType === "lib_p") query = { category: "Librería Principal" };
+  if (filterType === "lib_e") query = { category: "Librería de Emergencia" };
   await collection.deleteMany(query);
   res.json({ ok: true });
 });
@@ -217,13 +229,13 @@ app.get("/admin", async (req, res) => {
     <!DOCTYPE html>
     <html>
     <head>
-      <title>IPTV Manager</title>
+      <title>IPTV Manager PRO</title>
       <style>
-        :root { --bg: #0f0f0f; --card: #1a1a1a; --primary: #3d5afe; --danger: #ff1744; --success: #28a745; --text: #ffffff; }
+        :root { --bg: #0f0f0f; --card: #1a1a1a; --primary: #3d5afe; --danger: #ff1744; --success: #28a745; --text: #ffffff; --warn: #ffeb3b; }
         body { font-family: 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); margin: 0; padding: 20px; }
         .header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; border-bottom: 1px solid #333; padding-bottom: 15px; }
-        .nav-menu { display: flex; gap: 10px; }
-        .nav-btn { background: #333; border: none; color: white; padding: 10px 18px; cursor: pointer; border-radius: 8px; font-weight: bold; }
+        .nav-menu { display: flex; gap: 8px; flex-wrap: wrap; }
+        .nav-btn { background: #333; border: none; color: white; padding: 10px 15px; cursor: pointer; border-radius: 8px; font-weight: bold; font-size: 13px; }
         .nav-btn.active { background: var(--primary); }
         .view-container { display: none; background: var(--card); padding: 20px; border-radius: 12px; }
         .view-container.active { display: block; }
@@ -237,27 +249,27 @@ app.get("/admin", async (req, res) => {
         .btn-danger-all { background: var(--danger); color: white; border: none; padding: 8px 15px; border-radius: 5px; cursor: pointer; font-weight: bold; margin-bottom: 15px; }
         .btn-toggle { background: #444; border: 1px solid #666; color: white; padding: 10px 20px; border-radius: 8px; cursor: pointer; font-weight: bold; }
         .btn-toggle.active { background: var(--success); }
-        .btn-add-here { width: 100%; background: transparent; border: none; color: #ffeb3b; font-size: 20px; cursor: pointer; }
-        .add-row td { border: none !important; padding: 0 !important; }
+        .btn-add-here { width: 100%; background: transparent; border: none; color: var(--warn); font-size: 20px; cursor: pointer; }
       </style>
     </head>
     <body>
       <div class="header">
         <div style="display:flex; align-items:center; gap:20px;">
-          <h2 style="margin:0;">📺 IPTV Manager</h2>
+          <h2 style="margin:0;">📺 IPTV Manager PRO</h2>
           <button id="toggleBtn" class="btn-toggle" onclick="toggleAutoRefresh()">▶️ Auto-Refresh: OFF</button>
         </div>
         <div class="nav-menu">
           <button class="nav-btn active" onclick="showView('all', this)">Todas las Señales</button>
-          <button class="nav-btn" onclick="showView('categories', this)">Por Categoría</button>
-          <button class="nav-btn" onclick="showView('main', this)">Pantalla Principal</button>
-          <button class="nav-btn" onclick="showView('backup', this)">Librería Respaldo</button>
+          <button class="nav-btn" onclick="showView('categories', this)">Categorías</button>
+          <button class="nav-btn" onclick="showView('main', this)">P. Principal</button>
+          <button class="nav-btn" style="color:var(--warn)" onclick="showView('lib-p', this)">⭐ Lib. Principal</button>
+          <button class="nav-btn" style="color:#00e5ff;" onclick="showView('lib-e', this)">🆘 Lib. Emergencia</button>
         </div>
       </div>
 
       <div id="view-all" class="view-container active">
         <div class="bulk-section">
-          <h4 style="margin:0 0 10px 0;">➕ Carga Masiva (Todas las Señales)</h4>
+          <h4>➕ Carga Masiva (Todas las Señales)</h4>
           <form method="POST" action="/addBulk?key=${API_KEY}">
             <textarea name="list" rows="2" placeholder="Nombre, URL"></textarea>
             <input type="hidden" name="category" value="CANALES DE TODAS LAS SEÑALES">
@@ -270,7 +282,7 @@ app.get("/admin", async (req, res) => {
 
       <div id="view-categories" class="view-container">
         <div class="bulk-section" id="bulk-cat-section" style="display:none;">
-          <h4 style="margin:0 0 10px 0;">➕ Carga Masiva (Categoría: <span id="current-cat-name"></span>)</h4>
+          <h4 id="current-cat-header"></h4>
           <form method="POST" action="/addBulk?key=${API_KEY}">
             <textarea name="list" rows="2" placeholder="Nombre, URL"></textarea>
             <input type="hidden" name="category" id="hidden-cat-value">
@@ -288,7 +300,7 @@ app.get("/admin", async (req, res) => {
 
       <div id="view-main" class="view-container">
         <div class="bulk-section">
-          <h4 style="margin:0 0 10px 0;">➕ Carga Masiva (Pantalla Principal)</h4>
+          <h4>➕ Carga Masiva (Pantalla Principal)</h4>
           <form method="POST" action="/addBulk?key=${API_KEY}">
             <textarea name="list" rows="2" placeholder="Nombre, URL"></textarea>
             <input type="hidden" name="category" value="PANTALLA PRINCIPAL">
@@ -299,17 +311,30 @@ app.get("/admin", async (req, res) => {
         <table>${streams.filter(s => s.category === "Pantalla Principal").map(s => renderRowSimple(s)).join('')}</table>
       </div>
 
-      <div id="view-backup" class="view-container">
-        <div class="bulk-section">
-          <h4 style="margin:0 0 10px 0;">➕ Carga Masiva (Librería de Respaldo)</h4>
+      <div id="view-lib-p" class="view-container">
+        <div class="bulk-section" style="border-left-color:var(--warn)">
+          <h4>⭐ Carga Masiva (Librería Principal)</h4>
           <form method="POST" action="/addBulk?key=${API_KEY}">
             <textarea name="list" rows="2" placeholder="Nombre, URL"></textarea>
-            <input type="hidden" name="category" value="LIBRERÍA DE RESPALDO">
+            <input type="hidden" name="category" value="LIBRERIA PRINCIPAL">
             <button class="nav-btn" style="background:var(--success); margin-top:10px;">Agregar</button>
           </form>
         </div>
-        <button class="btn-danger-all" onclick="borrarMasivo('backup')">🗑 Limpiar Librería de Respaldo</button>
-        <table>${streams.filter(s => s.category === "Librería de Respaldo").map(s => renderRowSimple(s)).join('')}</table>
+        <button class="btn-danger-all" onclick="borrarMasivo('lib_p')">🗑 Limpiar Librería Principal</button>
+        <table>${streams.filter(s => s.category === "Librería Principal").map(s => renderRowSimple(s)).join('')}</table>
+      </div>
+
+      <div id="view-lib-e" class="view-container">
+        <div class="bulk-section" style="border-left-color:#00e5ff">
+          <h4>🆘 Carga Masiva (Librería Emergencia)</h4>
+          <form method="POST" action="/addBulk?key=${API_KEY}">
+            <textarea name="list" rows="2" placeholder="Nombre, URL"></textarea>
+            <input type="hidden" name="category" value="LIBRERIA EMERGENCIA">
+            <button class="nav-btn" style="background:var(--success); margin-top:10px;">Agregar</button>
+          </form>
+        </div>
+        <button class="btn-danger-all" onclick="borrarMasivo('lib_e')">🗑 Limpiar Librería Emergencia</button>
+        <table>${streams.filter(s => s.category === "Librería de Emergencia").map(s => renderRowSimple(s)).join('')}</table>
       </div>
 
       <script>
@@ -328,7 +353,7 @@ app.get("/admin", async (req, res) => {
           document.querySelectorAll('.cat-filter-btn').forEach(b => b.style.background = "#333");
           btn.style.background = "var(--primary)";
           document.getElementById('bulk-cat-section').style.display = 'block';
-          document.getElementById('current-cat-name').innerText = cat;
+          document.getElementById('current-cat-header').innerText = "➕ Carga Masiva (" + cat + ")";
           document.getElementById('hidden-cat-value').value = cat;
           document.getElementById('cat-actions').style.display = 'block';
           document.getElementById('btnDelCat').onclick = () => borrarMasivo('category', cat);
@@ -413,4 +438,4 @@ app.get("/admin", async (req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log("🚀 Sistema Blindado Online"));
+app.listen(PORT, () => console.log("🚀 Sistema Blindado Jerárquico PRO Online"));

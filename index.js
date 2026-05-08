@@ -30,7 +30,7 @@ async function conectarDB() {
   } catch (e) { console.error("❌ Error MongoDB:", e); }
 }
 
-// --- LÓGICA DE AUTO-REEMPLAZO UNIVERSAL (TODAS LAS SECCIONES) ---
+// --- LÓGICA DE AUTO-REEMPLAZO CORREGIDA (PARA TODAS LAS SECCIONES) ---
 let checking = false;
 async function checkStreams() {
   if (checking || !collection) return;
@@ -38,7 +38,7 @@ async function checkStreams() {
   try {
     const streams = await collection.find().toArray();
     
-    // 1. Verificación de estado de salud (Ping)
+    // 1. Verificación de estado (Ping) para todos los canales
     await Promise.all(streams.map(async (stream) => {
       let status = "offline";
       try {
@@ -56,13 +56,13 @@ async function checkStreams() {
       }
     }));
 
-    // 2. Aplicar Backup a TODO el sistema
+    // 2. Aplicar Jerarquía de Backup a todas las categorías por igual
     const updatedStreams = await collection.find().toArray();
     const libPrincipal = updatedStreams.filter(s => s.category === "Librería Principal" && s.status === "online");
     const libEmergencia = updatedStreams.filter(s => s.category === "Librería de Emergencia" && s.status === "online");
 
     for (const stream of updatedStreams) {
-      // Omitir las librerías para no reemplazarse a sí mismas
+      // No procesamos las librerías para evitar bucles
       if (stream.category === "Librería Principal" || stream.category === "Librería de Emergencia") continue;
       
       const escapedName = stream.name.trim().toLowerCase();
@@ -71,16 +71,17 @@ async function checkStreams() {
       
       let targetUrl = null;
 
-      // REGLA: Si está caído, buscar en Principal, luego en Emergencia
+      // REGLA: Si el canal está offline, buscar respaldo
       if (stream.status === "offline") {
         if (backupPrincipal) targetUrl = backupPrincipal.url;
         else if (backupEmergencia) targetUrl = backupEmergencia.url;
       } 
-      // REGLA: Si está online pero hay algo en Lib Principal que no es la URL actual, priorizar Lib Principal
+      // REGLA: Si está online pero existe un link en Lib Principal, priorizar siempre el Principal
       else if (backupPrincipal && stream.url !== backupPrincipal.url) {
         targetUrl = backupPrincipal.url;
       }
 
+      // Aplicar el cambio si encontramos un link funcional
       if (targetUrl && stream.url !== targetUrl) {
         await collection.updateOne({ _id: stream._id }, { $set: { url: targetUrl, status: "online" } });
       }
@@ -91,15 +92,14 @@ async function checkStreams() {
 
 (async () => { await conectarDB(); setInterval(checkStreams, 15000); })();
 
-// --- ENDPOINT PARA LA APP ---
+// --- ENDPOINTS Y PANEL (SIN CAMBIOS PARA NO MOVER NADA) ---
+
 app.get("/streams", async (req, res) => {
   try {
     const streams = await collection.find().sort({ createdAt: 1 }).toArray();
     res.json(streams);
   } catch (e) { res.status(500).send("Error"); }
 });
-
-// --- ENDPOINTS ADMINISTRATIVOS ---
 
 app.post("/insertFirst", async (req, res) => {
     if (req.query.key !== API_KEY) return res.status(401).send("No autorizado");
@@ -125,10 +125,8 @@ app.post("/insertAt", async (req, res) => {
 app.post("/addBulk", async (req, res) => {
   if (req.query.key !== API_KEY) return res.status(401).send("No autorizado");
   const { list, category } = req.body;
-  
   let finalCat = category;
   const upperCat = category.toUpperCase();
-
   if (upperCat.includes("TODAS LAS SEÑALES")) finalCat = "Todas las Señales";
   else if (upperCat.includes("PANTALLA PRINCIPAL")) finalCat = "Pantalla Principal";
   else if (upperCat.includes("LIBRERIA PRINCIPAL") || upperCat.includes("LIBRERÍA PRINCIPAL")) finalCat = "Librería Principal";
@@ -176,7 +174,6 @@ app.post("/deleteAll", async (req, res) => {
   res.json({ ok: true });
 });
 
-// --- INTERFAZ PANEL ---
 app.get("/admin", async (req, res) => {
   if (req.query.key !== API_KEY) return res.send("No autorizado");
   try {
@@ -377,4 +374,4 @@ app.get("/admin", async (req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log("🚀 Sistema con Backup Universal activo en todas las secciones"));
+app.listen(PORT, () => console.log("🚀 Sistema con Backup Universal activo en TODAS las secciones"));

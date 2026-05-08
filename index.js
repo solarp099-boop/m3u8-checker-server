@@ -30,13 +30,15 @@ async function conectarDB() {
   } catch (e) { console.error("❌ Error MongoDB:", e); }
 }
 
-// --- LÓGICA DE AUTO-REEMPLAZO (JERARQUÍA DE BACKUP) ---
+// --- LÓGICA DE AUTO-REEMPLAZO UNIVERSAL (TODAS LAS SECCIONES) ---
 let checking = false;
 async function checkStreams() {
   if (checking || !collection) return;
   checking = true;
   try {
     const streams = await collection.find().toArray();
+    
+    // 1. Verificación de estado de salud (Ping)
     await Promise.all(streams.map(async (stream) => {
       let status = "offline";
       try {
@@ -54,23 +56,31 @@ async function checkStreams() {
       }
     }));
 
+    // 2. Aplicar Backup a TODO el sistema
     const updatedStreams = await collection.find().toArray();
     const libPrincipal = updatedStreams.filter(s => s.category === "Librería Principal" && s.status === "online");
     const libEmergencia = updatedStreams.filter(s => s.category === "Librería de Emergencia" && s.status === "online");
 
     for (const stream of updatedStreams) {
+      // Omitir las librerías para no reemplazarse a sí mismas
       if (stream.category === "Librería Principal" || stream.category === "Librería de Emergencia") continue;
+      
       const escapedName = stream.name.trim().toLowerCase();
       const backupPrincipal = libPrincipal.find(l => l.name.trim().toLowerCase() === escapedName);
       const backupEmergencia = libEmergencia.find(l => l.name.trim().toLowerCase() === escapedName);
       
       let targetUrl = null;
+
+      // REGLA: Si está caído, buscar en Principal, luego en Emergencia
       if (stream.status === "offline") {
         if (backupPrincipal) targetUrl = backupPrincipal.url;
         else if (backupEmergencia) targetUrl = backupEmergencia.url;
-      } else if (backupPrincipal && stream.url !== backupPrincipal.url) {
+      } 
+      // REGLA: Si está online pero hay algo en Lib Principal que no es la URL actual, priorizar Lib Principal
+      else if (backupPrincipal && stream.url !== backupPrincipal.url) {
         targetUrl = backupPrincipal.url;
       }
+
       if (targetUrl && stream.url !== targetUrl) {
         await collection.updateOne({ _id: stream._id }, { $set: { url: targetUrl, status: "online" } });
       }
@@ -81,7 +91,7 @@ async function checkStreams() {
 
 (async () => { await conectarDB(); setInterval(checkStreams, 15000); })();
 
-// --- ENDPOINT PARA LA APP (ESTO FALTABA) ---
+// --- ENDPOINT PARA LA APP ---
 app.get("/streams", async (req, res) => {
   try {
     const streams = await collection.find().sort({ createdAt: 1 }).toArray();
@@ -367,4 +377,4 @@ app.get("/admin", async (req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log("🚀 Sistema con Carga Masiva corregida y App vinculada"));
+app.listen(PORT, () => console.log("🚀 Sistema con Backup Universal activo en todas las secciones"));

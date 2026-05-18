@@ -411,11 +411,59 @@ ${renderTable("Librería de Emergencia")}
         let autoRefresh = localStorage.getItem("iptv_refresh") === "true";
 
         function showView(view, btn) {
-          document.querySelectorAll('.view-container').forEach(v => v.classList.remove('active'));
-          document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
-          document.getElementById('view-' + view).classList.add('active');
-          btn.classList.add('active');
-        }
+
+document
+.querySelectorAll('.view-container')
+.forEach(
+v=>v.classList.remove('active')
+);
+
+document
+.querySelectorAll('.nav-btn')
+.forEach(
+b=>b.classList.remove('active')
+);
+
+document
+.getElementById(
+'view-'+view
+)
+.classList.add(
+'active'
+);
+
+btn.classList.add(
+'active'
+);
+
+
+/* cargar automáticamente filtros */
+
+if(view==="lib-p"){
+
+filterLibrary(
+"Librería Principal",
+"all",
+document.querySelector(
+"#view-lib-p .filter-btn"
+)
+);
+
+}
+
+if(view==="lib-e"){
+
+filterLibrary(
+"Librería de Emergencia",
+"all",
+document.querySelector(
+"#view-lib-e .filter-btn"
+)
+);
+
+}
+
+}
 
         function filterCat(cat, btn) {
           document.querySelectorAll('.cat-filter-btn').forEach(b => b.style.background = "#333");

@@ -185,6 +185,27 @@ app.post("/deleteAll", async (req, res) => {
   res.json({ ok: true });
 });
 
+app.post("/deleteOffline", async (req, res) => {
+
+if(req.query.key!==API_KEY)
+return res.status(401)
+.send("No autorizado");
+
+const {category}=req.body;
+
+await collection.deleteMany({
+
+category:category,
+status:"offline"
+
+});
+
+res.json({
+ok:true
+});
+
+});
+
 // --- INTERFAZ ---
 
 app.get("/admin", async (req, res) => {
@@ -245,6 +266,36 @@ app.get("/admin", async (req, res) => {
         .btn-toggle { background: #444; border: 1px solid #666; color: white; padding: 10px 20px; border-radius: 8px; cursor: pointer; font-weight: bold; }
         .btn-toggle.active { background: var(--success); }
         .btn-add-here { width: 100%; background: rgba(255,255,255,0.05); border: 1px dashed #444; color: var(--warn); font-size: 14px; padding: 5px; cursor: pointer; margin: 5px 0; }
+        .filter-box{
+display:flex;
+gap:8px;
+margin-bottom:15px;
+flex-wrap:wrap;
+}
+
+.filter-btn{
+background:#333;
+border:none;
+padding:10px 15px;
+border-radius:8px;
+cursor:pointer;
+color:white;
+font-weight:bold;
+}
+
+.filter-btn.active{
+background:var(--primary);
+}
+
+.delete-offline-btn{
+background:var(--danger);
+border:none;
+padding:10px 15px;
+border-radius:8px;
+cursor:pointer;
+font-weight:bold;
+color:white;
+}
       </style>
     </head>
     <body>
@@ -290,12 +341,69 @@ app.get("/admin", async (req, res) => {
       </div>
 
       <div id="view-lib-p" class="view-container">
-        ${renderTable("Librería Principal")}
-      </div>
 
-      <div id="view-lib-e" class="view-container">
-        ${renderTable("Librería de Emergencia")}
-      </div>
+<div class="filter-box">
+
+<button class="filter-btn active"
+onclick="filterLibrary('Librería Principal','all',this)">
+Todos
+</button>
+
+<button class="filter-btn"
+onclick="filterLibrary('Librería Principal','online',this)">
+🟢 Funcionales
+</button>
+
+<button class="filter-btn"
+onclick="filterLibrary('Librería Principal','offline',this)">
+🔴 No funcionales
+</button>
+
+<button class="delete-offline-btn"
+onclick="eliminarOffline('Librería Principal')">
+🗑 Eliminar rojos
+</button>
+
+</div>
+
+<div id="lib-principal-body">
+${renderTable("Librería Principal")}
+</div>
+
+</div>
+
+
+<div id="view-lib-e" class="view-container">
+
+<div class="filter-box">
+
+<button class="filter-btn active"
+onclick="filterLibrary('Librería de Emergencia','all',this)">
+Todos
+</button>
+
+<button class="filter-btn"
+onclick="filterLibrary('Librería de Emergencia','online',this)">
+🟢 Funcionales
+</button>
+
+<button class="filter-btn"
+onclick="filterLibrary('Librería de Emergencia','offline',this)">
+🔴 No funcionales
+</button>
+
+<button class="delete-offline-btn"
+onclick="eliminarOffline('Librería de Emergencia')">
+🗑 Eliminar rojos
+</button>
+
+</div>
+
+<div id="lib-emergencia-body">
+${renderTable("Librería de Emergencia")}
+</div>
+
+</div>
 
       <script>
         const API_KEY = "${API_KEY}";
@@ -369,6 +477,166 @@ app.get("/admin", async (req, res) => {
             await fetch("/insertFirst?key=" + API_KEY, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name, url, category }) });
             location.reload();
         }
+
+        function filterLibrary(category,status,btn){
+
+btn.parentElement
+.querySelectorAll(".filter-btn")
+.forEach(
+b=>b.classList.remove("active")
+);
+
+btn.classList.add("active");
+
+let filtered=
+allStreams.filter(
+s=>s.category===category
+);
+
+if(status!=="all"){
+
+filtered=
+filtered.filter(
+s=>s.status===status
+);
+
+}
+
+const html=`
+
+<table>
+
+${filtered.map(s=>`
+
+<tr class="add-row">
+<td colspan="5" style="padding:0;">
+<button class="btn-add-here"
+onclick="insertarAqui('${s._id}')">
++
+</button>
+</td>
+</tr>
+
+<tr>
+
+<td width="30">
+
+${s.status==="online"
+?'🟢'
+:'🔴'}
+
+</td>
+
+<td width="50">
+
+<img
+src="${s.logo||''}"
+onerror="this.src='https://cdn-icons-png.flaticon.com/512/3172/3172551.png'"
+style="
+width:45px;
+height:45px;
+border-radius:8px;
+object-fit:contain;
+background:#000;
+border:1px solid #333;
+">
+
+</td>
+
+<td width="180">
+
+<input
+class="input-url"
+id="name-${s._id}"
+value="${s.name}"
+style="font-weight:bold;"
+>
+
+<br>
+
+<span class="cat-badge">
+${s.category}
+</span>
+
+</td>
+
+<td>
+
+<input
+class="input-url"
+id="url-${s._id}"
+value="${s.url}"
+>
+
+</td>
+
+<td width="100">
+
+<button
+class="btn-play"
+onclick="guardar('${s._id}')">
+💾
+</button>
+
+<button
+class="btn-play"
+style="background:var(--danger)"
+onclick="eliminar('${s._id}')">
+❌
+</button>
+
+</td>
+
+</tr>
+
+`).join("")}
+
+</table>
+`;
+
+if(
+category==="Librería Principal"
+){
+
+document.getElementById(
+"lib-principal-body"
+).innerHTML=html;
+
+}else{
+
+document.getElementById(
+"lib-emergencia-body"
+).innerHTML=html;
+
+}
+
+}
+
+
+async function eliminarOffline(category){
+
+if(
+!confirm(
+"¿Eliminar todos los canales rojos?"
+)
+)return;
+
+await fetch(
+"/deleteOffline?key="+API_KEY,
+{
+method:"POST",
+headers:{
+"Content-Type":"application/json"
+},
+body:JSON.stringify({
+category
+})
+}
+);
+
+location.reload();
+
+}
 
         function toggleAutoRefresh() {
           autoRefresh = !autoRefresh; localStorage.setItem("iptv_refresh", autoRefresh); location.reload();

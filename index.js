@@ -186,24 +186,16 @@ app.post("/deleteAll", async (req, res) => {
 });
 
 app.post("/deleteOffline", async (req, res) => {
+  if (req.query.key !== API_KEY) return res.status(401).send("No autorizado");
 
-if(req.query.key!==API_KEY)
-return res.status(401)
-.send("No autorizado");
+  const { category } = req.body;
 
-const {category}=req.body;
+  await collection.deleteMany({
+    category: category,
+    status: "offline"
+  });
 
-await collection.deleteMany({
-
-category:category,
-status:"offline"
-
-});
-
-res.json({
-ok:true
-});
-
+  res.json({ ok: true });
 });
 
 // --- INTERFAZ ---
@@ -267,34 +259,34 @@ app.get("/admin", async (req, res) => {
         .btn-toggle.active { background: var(--success); }
         .btn-add-here { width: 100%; background: rgba(255,255,255,0.05); border: 1px dashed #444; color: var(--warn); font-size: 14px; padding: 5px; cursor: pointer; margin: 5px 0; }
         .filter-box{
-display:flex;
-gap:8px;
-margin-bottom:15px;
-flex-wrap:wrap;
+  display:flex;
+  gap:8px;
+  margin-bottom:15px;
+  flex-wrap:wrap;
 }
 
 .filter-btn{
-background:#333;
-border:none;
-padding:10px 15px;
-border-radius:8px;
-cursor:pointer;
-color:white;
-font-weight:bold;
+  background:#333;
+  border:none;
+  padding:10px 15px;
+  border-radius:8px;
+  cursor:pointer;
+  color:white;
+  font-weight:bold;
 }
 
 .filter-btn.active{
-background:var(--primary);
+  background:var(--primary);
 }
 
 .delete-offline-btn{
-background:var(--danger);
-border:none;
-padding:10px 15px;
-border-radius:8px;
-cursor:pointer;
-font-weight:bold;
-color:white;
+  background:var(--danger);
+  border:none;
+  padding:10px 15px;
+  border-radius:8px;
+  cursor:pointer;
+  font-weight:bold;
+  color:white;
 }
       </style>
     </head>
@@ -341,68 +333,29 @@ color:white;
       </div>
 
       <div id="view-lib-p" class="view-container">
+  <div class="filter-box">
+    <button class="filter-btn active" onclick="filterLibrary('Librería Principal','all',this)">Todos</button>
+    <button class="filter-btn" onclick="filterLibrary('Librería Principal','online',this)">🟢 Funcionales</button>
+    <button class="filter-btn" onclick="filterLibrary('Librería Principal','offline',this)">🔴 No funcionales</button>
+    <button class="delete-offline-btn" onclick="eliminarOffline('Librería Principal')">🗑 Eliminar rojos</button>
+  </div>
 
-<div class="filter-box">
-
-<button class="filter-btn active"
-onclick="filterLibrary('Librería Principal','all',this)">
-Todos
-</button>
-
-<button class="filter-btn"
-onclick="filterLibrary('Librería Principal','online',this)">
-🟢 Funcionales
-</button>
-
-<button class="filter-btn"
-onclick="filterLibrary('Librería Principal','offline',this)">
-🔴 No funcionales
-</button>
-
-<button class="delete-offline-btn"
-onclick="eliminarOffline('Librería Principal')">
-🗑 Eliminar rojos
-</button>
-
+  <div id="lib-principal-body">
+    ${renderTable("Librería Principal")}
+  </div>
 </div>
-
-<div id="lib-principal-body">
-${renderTable("Librería Principal")}
-</div>
-
-</div>
-
 
 <div id="view-lib-e" class="view-container">
+  <div class="filter-box">
+    <button class="filter-btn active" onclick="filterLibrary('Librería de Emergencia','all',this)">Todos</button>
+    <button class="filter-btn" onclick="filterLibrary('Librería de Emergencia','online',this)">🟢 Funcionales</button>
+    <button class="filter-btn" onclick="filterLibrary('Librería de Emergencia','offline',this)">🔴 No funcionales</button>
+    <button class="delete-offline-btn" onclick="eliminarOffline('Librería de Emergencia')">🗑 Eliminar rojos</button>
+  </div>
 
-<div class="filter-box">
-
-<button class="filter-btn active"
-onclick="filterLibrary('Librería de Emergencia','all',this)">
-Todos
-</button>
-
-<button class="filter-btn"
-onclick="filterLibrary('Librería de Emergencia','online',this)">
-🟢 Funcionales
-</button>
-
-<button class="filter-btn"
-onclick="filterLibrary('Librería de Emergencia','offline',this)">
-🔴 No funcionales
-</button>
-
-<button class="delete-offline-btn"
-onclick="eliminarOffline('Librería de Emergencia')">
-🗑 Eliminar rojos
-</button>
-
-</div>
-
-<div id="lib-emergencia-body">
-${renderTable("Librería de Emergencia")}
-</div>
-
+  <div id="lib-emergencia-body">
+    ${renderTable("Librería de Emergencia")}
+  </div>
 </div>
 
       <script>
@@ -412,56 +365,66 @@ ${renderTable("Librería de Emergencia")}
 
         function showView(view, btn) {
 
-document
-.querySelectorAll('.view-container')
-.forEach(
-v=>v.classList.remove('active')
-);
+    document
+    .querySelectorAll('.view-container')
+    .forEach(
+        v=>v.classList.remove('active')
+    );
 
-document
-.querySelectorAll('.nav-btn')
-.forEach(
-b=>b.classList.remove('active')
-);
+    document
+    .querySelectorAll('.nav-btn')
+    .forEach(
+        b=>b.classList.remove('active')
+    );
 
-document
-.getElementById(
-'view-'+view
-)
-.classList.add(
-'active'
-);
+    document
+    .getElementById(
+        'view-'+view
+    )
+    .classList
+    .add('active');
 
-btn.classList.add(
-'active'
-);
+    btn.classList.add('active');
 
 
-/* cargar automáticamente filtros */
+    if(view==="lib-p"){
 
-if(view==="lib-p"){
+        const firstBtn=
+        document.querySelector(
+        "#view-lib-p .filter-btn"
+        );
 
-filterLibrary(
-"Librería Principal",
-"all",
-document.querySelector(
-"#view-lib-p .filter-btn"
-)
-);
+        if(firstBtn){
 
-}
+            filterLibrary(
+            "Librería Principal",
+            "all",
+            firstBtn
+            );
 
-if(view==="lib-e"){
+        }
 
-filterLibrary(
-"Librería de Emergencia",
-"all",
-document.querySelector(
-"#view-lib-e .filter-btn"
-)
-);
+    }
 
-}
+
+    if(view==="lib-e"){
+
+        const firstBtn=
+        document.querySelector(
+        "#view-lib-e .filter-btn"
+        );
+
+        if(firstBtn){
+
+            filterLibrary(
+            "Librería de Emergencia",
+            "all",
+            firstBtn
+            );
+
+        }
+
+    }
 
 }
 
@@ -526,163 +489,130 @@ document.querySelector(
             location.reload();
         }
 
-        function filterLibrary(category,status,btn){
+        
+        function filterLibrary(category, status, btn) {
 
-btn.parentElement
-.querySelectorAll(".filter-btn")
-.forEach(
-b=>b.classList.remove("active")
-);
+    const container =
+        category === "Librería Principal"
+        ? document.getElementById("lib-principal-body")
+        : document.getElementById("lib-emergencia-body");
 
-btn.classList.add("active");
+    if (!container) return;
 
-let filtered=
-allStreams.filter(
-s=>s.category===category
-);
+    const buttons =
+        btn.parentElement.querySelectorAll(".filter-btn");
 
-if(status!=="all"){
+    buttons.forEach(b => b.classList.remove("active"));
 
-filtered=
-filtered.filter(
-s=>s.status===status
-);
+    btn.classList.add("active");
 
-}
+    let filtered =
+        allStreams.filter(
+            s => s.category === category
+        );
 
-const html=`
+    if (status !== "all") {
 
-<table>
+        filtered =
+        filtered.filter(
+            s => s.status === status
+        );
 
-${filtered.map(s=>`
+    }
 
-<tr class="add-row">
-<td colspan="5" style="padding:0;">
-<button class="btn-add-here"
-onclick="insertarAqui('${s._id}')">
-+
-</button>
-</td>
-</tr>
+    let rows = "";
 
-<tr>
+    filtered.forEach(s => {
 
-<td width="30">
+        rows +=
+        '<tr class="add-row">' +
+        '<td colspan="5" style="padding:0;">' +
+        '<button class="btn-add-here" onclick="insertarAqui(\'' + s._id + '\')">+</button>' +
+        '</td>' +
+        '</tr>' +
 
-${s.status==="online"
-?'🟢'
-:'🔴'}
+        '<tr id="row-' + s._id + '">' +
 
-</td>
+        '<td width="30">' +
+        (s.status === "online" ? "🟢" : "🔴") +
+        '</td>' +
 
-<td width="50">
+        '<td width="50">' +
+        '<img src="' + (s.logo || '') + '" ' +
+        'onerror="this.src=\'https://cdn-icons-png.flaticon.com/512/3172/3172551.png\'" ' +
+        'style="width:45px;height:45px;border-radius:8px;object-fit:contain;background:#000;border:1px solid #333;">' +
+        '</td>' +
 
-<img
-src="${s.logo||''}"
-onerror="this.src='https://cdn-icons-png.flaticon.com/512/3172/3172551.png'"
-style="
-width:45px;
-height:45px;
-border-radius:8px;
-object-fit:contain;
-background:#000;
-border:1px solid #333;
-">
+        '<td width="180">' +
+        '<input class="input-url" id="name-' + s._id + '" value="' + s.name + '" style="font-weight:bold;">' +
+        '<br>' +
+        '<span class="cat-badge">' +
+        s.category +
+        '</span>' +
+        '</td>' +
 
-</td>
+        '<td>' +
+        '<input class="input-url" id="url-' + s._id + '" value="' + s.url + '">' +
+        '</td>' +
 
-<td width="180">
+        '<td width="100">' +
 
-<input
-class="input-url"
-id="name-${s._id}"
-value="${s.name}"
-style="font-weight:bold;"
->
+        '<button class="btn-play" onclick="guardar(\'' + s._id + '\')">' +
+        '💾' +
+        '</button>' +
 
-<br>
+        '<button class="btn-play" style="background:var(--danger)" onclick="eliminar(\'' + s._id + '\')">' +
+        '❌' +
+        '</button>' +
 
-<span class="cat-badge">
-${s.category}
-</span>
+        '</td>' +
+        '</tr>';
 
-</td>
+    });
 
-<td>
+    if (rows === "") {
 
-<input
-class="input-url"
-id="url-${s._id}"
-value="${s.url}"
->
+        rows =
+        '<tr>' +
+        '<td colspan="5" style="text-align:center;padding:20px;">' +
+        'No hay canales para mostrar' +
+        '</td>' +
+        '</tr>';
 
-</td>
+    }
 
-<td width="100">
-
-<button
-class="btn-play"
-onclick="guardar('${s._id}')">
-💾
-</button>
-
-<button
-class="btn-play"
-style="background:var(--danger)"
-onclick="eliminar('${s._id}')">
-❌
-</button>
-
-</td>
-
-</tr>
-
-`).join("")}
-
-</table>
-`;
-
-if(
-category==="Librería Principal"
-){
-
-document.getElementById(
-"lib-principal-body"
-).innerHTML=html;
-
-}else{
-
-document.getElementById(
-"lib-emergencia-body"
-).innerHTML=html;
-
-}
+    container.innerHTML =
+    '<table>' +
+    rows +
+    '</table>';
 
 }
 
 
 async function eliminarOffline(category){
 
-if(
-!confirm(
-"¿Eliminar todos los canales rojos?"
-)
-)return;
+    if(
+        !confirm(
+        "¿Eliminar todos los canales rojos de esta librería?"
+        )
+    ) return;
 
-await fetch(
-"/deleteOffline?key="+API_KEY,
-{
-method:"POST",
-headers:{
-"Content-Type":"application/json"
-},
-body:JSON.stringify({
-category
-})
-}
-);
+    await fetch(
+        "/deleteOffline?key="+API_KEY,
+        {
+            method:"POST",
 
-location.reload();
+            headers:{
+                "Content-Type":"application/json"
+            },
+
+            body:JSON.stringify({
+                category
+            })
+        }
+    );
+
+    location.reload();
 
 }
 

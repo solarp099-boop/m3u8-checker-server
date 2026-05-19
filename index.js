@@ -31,12 +31,15 @@ async function conectarDB() {
 }
 
 // --- LÓGICA DE AUTO-REEMPLAZO (JERARQUÍA DE BACKUP) ---
+// --- LÓGICA DE AUTO-REEMPLAZO (JERARQUÍA DE BACKUP OPTIMIZADA) ---
 let checking = false;
 async function checkStreams() {
   if (checking || !collection) return;
   checking = true;
   try {
     const streams = await collection.find().toArray();
+    
+    // 1. Validamos el estado real en red de cada enlace actual
     await Promise.all(streams.map(async (stream) => {
       let status = "offline";
       try {
@@ -54,23 +57,34 @@ async function checkStreams() {
       }
     }));
 
+    // Volvemos a traer la lista con los estados de salud recién actualizados
     const updatedStreams = await collection.find().toArray();
     const libPrincipal = updatedStreams.filter(s => s.category === "Librería Principal" && s.status === "online");
     const libEmergencia = updatedStreams.filter(s => s.category === "Librería de Emergencia" && s.status === "online");
 
+    // 2. Aplicamos las Reglas de Oro para las secciones operativas
     for (const stream of updatedStreams) {
+      // Las librerías actúan solo como almacén de respaldos, no se modifican a sí mismas
       if (stream.category === "Librería Principal" || stream.category === "Librería de Emergencia") continue;
+      
+      // REGLA 1: Si el canal está ONLINE (Verde 🟢), respetamos tu cambio manual y pasamos al siguiente
+      if (stream.status === "online") {
+        continue; 
+      }
+
+      // REGLA 2: Si el canal está OFFLINE (Rojo 🔴), se activa el protocolo automático
       const escapedName = stream.name.trim().toLowerCase();
       const backupPrincipal = libPrincipal.find(l => l.name.trim().toLowerCase() === escapedName);
       const backupEmergencia = libEmergencia.find(l => l.name.trim().toLowerCase() === escapedName);
       
       let targetUrl = null;
-      if (stream.status === "offline") {
-        if (backupPrincipal) targetUrl = backupPrincipal.url;
-        else if (backupEmergencia) targetUrl = backupEmergencia.url;
-      } else if (backupPrincipal && stream.url !== backupPrincipal.url) {
+      if (backupPrincipal) {
         targetUrl = backupPrincipal.url;
+      } else if (backupEmergencia) {
+        targetUrl = backupEmergencia.url;
       }
+
+      // Si encontramos un repuesto funcional en las librerías, levantamos la señal
       if (targetUrl && stream.url !== targetUrl) {
         await collection.updateOne({ _id: stream._id }, { $set: { url: targetUrl, status: "online" } });
       }

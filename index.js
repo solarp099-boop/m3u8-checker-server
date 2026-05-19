@@ -157,6 +157,44 @@ app.post("/addBulk", async (req, res) => {
   res.redirect(`/admin?key=${API_KEY}`);
 });
 
+app.post("/addBulkTop", async (req, res) => {
+  if (req.query.key !== API_KEY) return res.status(401).send("No autorizado");
+  const { list, category } = req.body;
+  
+  let finalCat = category;
+  const upperCat = category.toUpperCase();
+  if (upperCat.includes("LIBRERIA PRINCIPAL") || upperCat.includes("LIBRERÍA PRINCIPAL")) finalCat = "Librería Principal";
+  else if (upperCat.includes("LIBRERIA EMERGENCIA") || upperCat.includes("LIBRERÍA DE EMERGENCIA")) finalCat = "Librería de Emergencia";
+
+  // Buscamos el primer canal actual de esta sección para obtener su fecha de creación
+  const firstStream = await collection.find({ category: finalCat }).sort({ createdAt: 1 }).limit(1).toArray();
+  
+  // Establecemos el tiempo base restando un margen para que queden arriba del todo
+  let baseTime = firstStream.length > 0 ? new Date(firstStream[0].createdAt).getTime() - (1000 * 60) : Date.now();
+
+  const lines = list.split("\n");
+  const toInsert = [];
+  
+  lines.forEach((line, index) => {
+    const parts = line.split(",");
+    if (parts.length >= 2) {
+      const channelName = parts[0].trim();
+      toInsert.push({ 
+        name: channelName, 
+        url: parts[1].trim(), 
+        logo: generateLogoUrl(channelName), 
+        category: finalCat, 
+        status: "pending", 
+        // Sumamos milisegundos de forma inversa para preservar el orden en el que se escribieron
+        createdAt: new Date(baseTime + index) 
+      });
+    }
+  });
+
+  if (toInsert.length > 0) await collection.insertMany(toInsert);
+  res.redirect(`/admin?key=${API_KEY}`);
+});
+
 app.post("/update", async (req, res) => {
   if (req.query.key !== API_KEY) return res.status(401).send("No autorizado");
   const { id, url, name } = req.body;
@@ -170,6 +208,20 @@ app.post("/deleteStream", async (req, res) => {
   if (req.query.key !== API_KEY) return res.status(401).send("No autorizado");
   await collection.deleteOne({ _id: new ObjectId(req.body.id) });
   res.json({ ok: true });
+});
+
+app.post("/deleteOfflineStreams", async (req, res) => {
+  if (req.query.key !== API_KEY) return res.status(401).send("No autorizado");
+  const { category } = req.body;
+  if (!category) return res.status(400).send("Categoría requerida");
+  
+  try {
+    // Borra únicamente los que coinciden con la categoría y tienen status offline
+    await collection.deleteMany({ category: category, status: "offline" });
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
 });
 
 app.post("/deleteAll", async (req, res) => {
@@ -195,6 +247,11 @@ app.get("/admin", async (req, res) => {
 
     const renderTable = (catName) => {
         const filtered = streams.filter(s => s.category === catName);
+        
+        // Validamos si es una de las librerías para habilitar los controles especiales
+        const esLibreria = catName === "Librería Principal" || catName === "Librería de Emergencia";
+        const sanitizedCat = catName.replace(/\s+/g, '-'); // Para crear clases CSS válidas
+
         return `
         <div class="bulk-section">
           <h4>➕ Carga Masiva (${catName})</h4>
@@ -204,12 +261,41 @@ app.get("/admin", async (req, res) => {
             <button class="nav-btn" style="background:var(--success); margin-top:10px;">Agregar a ${catName}</button>
           </form>
         </div>
-        <button class="btn-danger-all" onclick="borrarMasivo('${catName === 'Pantalla Principal' ? 'main' : catName === 'Todas las Señales' ? 'all' : catName === 'Librería Principal' ? 'lib_p' : 'lib_e'}')">🗑 Limpiar Sección</button>
-        <button class="btn-add-here" onclick="insertarPrimero('${catName}')">➕ INSERTAR AL INICIO (#1)</button>
-        <table>
+        
+        <div style="margin-bottom: 15px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+          <button class="btn-danger-all" style="margin-bottom:0;" onclick="borrarMasivo('${catName === 'Pantalla Principal' ? 'main' : catName === 'Todas las Señales' ? 'all' : catName === 'Librería Principal' ? 'lib_p' : 'lib_e'}')">🗑 Limpiar Sección</button>
+          
+          ${esLibreria ? `
+            <button class="nav-btn" style="background: var(--warn); color: #000;" onclick="document.getElementById('bulk-top-${sanitizedCat}').style.display = document.getElementById('bulk-top-${sanitizedCat}').style.display === 'none' ? 'block' : 'none'">⚡ Carga Masiva al Inicio (#1)</button>
+          ` : `
+            <button class="nav-btn" style="background: var(--primary);" onclick="insertarPrimero('${catName}')">➕ INSERTAR AL INICIO (#1)</button>
+          `}
+          
+          ${esLibreria ? `
+            <div style="display: inline-flex; gap: 5px; background: #222; padding: 5px; border-radius: 8px; border: 1px solid #444;">
+              <button class="nav-btn" style="padding: 5px 10px; font-size: 12px;" onclick="filtrarPorEstado('${sanitizedCat}', 'todos')">🌐 Todos</button>
+              <button class="nav-btn" style="padding: 5px 10px; font-size: 12px; color: #28a745;" onclick="filtrarPorEstado('${sanitizedCat}', 'online')">🟢 Online</button>
+              <button class="nav-btn" style="padding: 5px 10px; font-size: 12px; color: #ff1744;" onclick="filtrarPorEstado('${sanitizedCat}', 'offline')">🔴 Offline</button>
+            </div>
+            <button class="btn-danger-all" style="margin-bottom:0; display: none;" id="btn-eliminar-caidos-${sanitizedCat}" onclick="eliminarCanalesCaidos('${catName}')">🗑 Eliminar Canales Offline</button>
+          ` : ''}
+        </div>
+
+        ${esLibreria ? `
+          <div class="bulk-section" id="bulk-top-${sanitizedCat}" style="display:none; border-left: 4px solid var(--warn);">
+            <h4 style="color: var(--warn);">⚡ Carga Masiva al INICIO (${catName})</h4>
+            <form method="POST" action="/addBulkTop?key=${API_KEY}">
+              <textarea name="list" rows="3" placeholder="Nombre Canal, URL&#10;Nombre Canal 2, URL 2"></textarea>
+              <input type="hidden" name="category" value="${catName}">
+              <button class="nav-btn" style="background:var(--warn); color:#000; margin-top:10px;">Insertar Primero en ${catName}</button>
+            </form>
+          </div>
+        ` : ''}
+
+        <table id="tabla-${sanitizedCat}">
             ${filtered.map(s => `
-                <tr class="add-row"><td colspan="5" style="padding:0;"><button class="btn-add-here" onclick="insertarAqui('${s._id}')">+</button></td></tr>
-                <tr id="row-${s._id}">
+                <tr class="add-row row-status-${s.status}" style="padding:0;"><td colspan="5" style="padding:0;"><button class="btn-add-here" onclick="insertarAqui('${s._id}')">+</button></td></tr>
+                <tr id="row-${s._id}" class="row-status-${s.status}">
                     <td width="30">${s.status === 'online' ? '🟢' : s.status === 'offline' ? '🔴' : '⚫'}</td>
                     <td width="50"><img src="${s.logo || ''}" onerror="this.src='https://cdn-icons-png.flaticon.com/512/3172/3172551.png'" style="width:45px;height:45px;border-radius:8px;object-fit:contain;background:#000;border:1px solid #333;"></td>
                     <td width="180"><input class="input-url" id="name-${s._id}" value="${s.name}" style="font-weight:bold;"><br/><span class="cat-badge">${s.category}</span></td>
@@ -369,6 +455,50 @@ app.get("/admin", async (req, res) => {
             if (!name || !url) return;
             await fetch("/insertFirst?key=" + API_KEY, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name, url, category }) });
             location.reload();
+        }
+
+        function filtrarPorEstado(sanitizedCat, estado) {
+          const tabla = document.getElementById('tabla-' + sanitizedCat);
+          if (!tabla) return;
+
+          const filas = tabla.querySelectorAll('tr');
+          filas.forEach(fila => {
+            if (estado === 'todos') {
+              fila.style.display = '';
+            } else if (estado === 'online') {
+              if (fila.classList.contains('row-status-online')) fila.style.display = '';
+              else fila.style.display = 'none';
+            } else if (estado === 'offline') {
+              if (fila.classList.contains('row-status-offline')) fila.style.display = '';
+              else fila.style.display = 'none';
+            }
+          });
+
+          // Mostrar el botón de "Eliminar Canales Offline" SOLO si el filtro actual es 'offline'
+          const btnEliminarCaidos = document.getElementById('btn-eliminar-caidos-' + sanitizedCat);
+          if (btnEliminarCaidos) {
+            if (estado === 'offline') {
+              btnEliminarCaidos.style.display = 'inline-block';
+            } else {
+              btnEliminarCaidos.style.display = 'none';
+            }
+          }
+        }
+
+        async function eliminarCanalesCaidos(category) {
+          if (!confirm("¿Estás seguro de que deseas eliminar TODOS los canales offline de la sección '" + category + "'?")) return;
+          
+          const response = await fetch("/deleteOfflineStreams?key=" + API_KEY, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ category })
+          });
+          
+          if (response.ok) {
+            location.reload();
+          } else {
+            alert("Hubo un error al intentar eliminar los canales caídos.");
+          }
         }
 
         function toggleAutoRefresh() {

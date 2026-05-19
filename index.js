@@ -522,7 +522,7 @@ app.get("/admin", async (req, res) => {
         if (autoRefresh) {
           document.getElementById("toggleBtn").classList.add("active");
           document.getElementById("toggleBtn").innerText = "⏸️ Auto-Refresh: ON";
-          setTimeout(() => location.reload(), 15000);
+          setTimeout(() => location.reload(), 10000);
         }
       </script>
     </body>

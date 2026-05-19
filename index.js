@@ -32,47 +32,61 @@ async function conectarDB() {
 
 // --- LÓGICA DE AUTO-REEMPLAZO (JERARQUÍA DE BACKUP) ---
 // --- LÓGICA DE AUTO-REEMPLAZO (JERARQUÍA DE BACKUP OPTIMIZADA) ---
+// --- LÓGICA DE AUTO-REEMPLAZO OPTIMIZADA (SIN SATURACIÓN DE RED) ---
 let checking = false;
+
+// Función auxiliar para dar un pequeño respiro entre canales (evita bloqueos de IP y falsos rojos)
+const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
 async function checkStreams() {
   if (checking || !collection) return;
   checking = true;
   try {
     const streams = await collection.find().toArray();
     
-    // 1. Validamos el estado real en red de cada enlace actual
-    await Promise.all(streams.map(async (stream) => {
+    // 1. Validamos el estado real en red canal por canal (secuencial con pausa)
+    for (const stream of streams) {
       let status = "offline";
       try {
-        await axios.head(stream.url, { timeout: 2500, headers: { "User-Agent": "Mozilla/5.0" }, validateStatus: (s) => s < 400 });
+        // Petición ligera HEAD
+        await axios.head(stream.url, { timeout: 3000, headers: { "User-Agent": "Mozilla/5.0" }, validateStatus: (s) => s < 400 });
         status = "online";
       } catch {
         try {
-          await axios.get(stream.url, { timeout: 3000, headers: { "User-Agent": "Mozilla/5.0" }, validateStatus: (s) => s === 200 || s === 206 });
+          // Petición ligera GET alternativa
+          await axios.get(stream.url, { timeout: 3500, headers: { "User-Agent": "Mozilla/5.0" }, validateStatus: (s) => s === 200 || s === 206 });
           status = "online";
-        } catch { status = "offline"; }
+        } catch { 
+          status = "offline"; 
+        }
       }
+
+      // Solo actualizamos la Base de Datos si el estado realmente cambió
       if (stream.status !== status) {
         await collection.updateOne({ _id: stream._id }, { $set: { status } });
         stream.status = status;
       }
-    }));
 
-    // Volvemos a traer la lista con los estados de salud recién actualizados
+      // Esperamos 150 milisegundos antes de revisar el siguiente canal para no saturar a Render
+      await delay(150);
+    }
+
+    // Volvemos a traer la lista con los estados reales ya actualizados
     const updatedStreams = await collection.find().toArray();
     const libPrincipal = updatedStreams.filter(s => s.category === "Librería Principal" && s.status === "online");
     const libEmergencia = updatedStreams.filter(s => s.category === "Librería de Emergencia" && s.status === "online");
 
-    // 2. Aplicamos las Reglas de Oro para las secciones operativas
+    // 2. Aplicamos las Reglas de Reemplazo Automático
     for (const stream of updatedStreams) {
-      // Las librerías actúan solo como almacén de respaldos, no se modifican a sí mismas
+      // Las librerías no se tocan a sí mismas
       if (stream.category === "Librería Principal" || stream.category === "Librería de Emergencia") continue;
       
-      // REGLA 1: Si el canal está ONLINE (Verde 🟢), respetamos tu cambio manual y pasamos al siguiente
+      // REGLA DE ORO: Si el canal está ONLINE (Verde 🟢), respetamos tu cambio manual y no lo tocamos
       if (stream.status === "online") {
         continue; 
       }
 
-      // REGLA 2: Si el canal está OFFLINE (Rojo 🔴), se activa el protocolo automático
+      // Si el canal está OFFLINE (Rojo 🔴), se activa el reemplazo desde las librerías
       const escapedName = stream.name.trim().toLowerCase();
       const backupPrincipal = libPrincipal.find(l => l.name.trim().toLowerCase() === escapedName);
       const backupEmergencia = libEmergencia.find(l => l.name.trim().toLowerCase() === escapedName);
@@ -84,16 +98,22 @@ async function checkStreams() {
         targetUrl = backupEmergencia.url;
       }
 
-      // Si encontramos un repuesto funcional en las librerías, levantamos la señal
+      // Si hay un repuesto disponible en las librerías, levantamos la señal
       if (targetUrl && stream.url !== targetUrl) {
         await collection.updateOne({ _id: stream._id }, { $set: { url: targetUrl, status: "online" } });
       }
     }
-  } catch (e) { console.error("Error en checker:", e); }
+  } catch (e) { 
+    console.error("Error en checker:", e); 
+  }
   checking = false;
 }
 
-(async () => { await conectarDB(); setInterval(checkStreams, 15000); })();
+// Al final de tu index.js, cambiamos el intervalo de 15 segundos (15000) a 2 minutos (120000)
+(async () => { 
+  await conectarDB(); 
+  setInterval(checkStreams, 120000); // <-- Cambiado a 2 minutos para estabilidad total
+})();
 
 // --- ENDPOINTS PARA LA APP ANDROID (VINCULACIÓN) ---
 

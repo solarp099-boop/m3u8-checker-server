@@ -157,6 +157,44 @@ app.post("/addBulk", async (req, res) => {
   res.redirect(`/admin?key=${API_KEY}`);
 });
 
+app.post("/addBulkTop", async (req, res) => {
+  if (req.query.key !== API_KEY) return res.status(401).send("No autorizado");
+  const { list, category } = req.body;
+  
+  let finalCat = category;
+  const upperCat = category.toUpperCase();
+  if (upperCat.includes("LIBRERIA PRINCIPAL") || upperCat.includes("LIBRERÍA PRINCIPAL")) finalCat = "Librería Principal";
+  else if (upperCat.includes("LIBRERIA EMERGENCIA") || upperCat.includes("LIBRERÍA DE EMERGENCIA")) finalCat = "Librería de Emergencia";
+
+  // Buscamos el primer canal actual de esta sección para obtener su fecha de creación
+  const firstStream = await collection.find({ category: finalCat }).sort({ createdAt: 1 }).limit(1).toArray();
+  
+  // Establecemos el tiempo base restando un margen para que queden arriba del todo
+  let baseTime = firstStream.length > 0 ? new Date(firstStream[0].createdAt).getTime() - (1000 * 60) : Date.now();
+
+  const lines = list.split("\n");
+  const toInsert = [];
+  
+  lines.forEach((line, index) => {
+    const parts = line.split(",");
+    if (parts.length >= 2) {
+      const channelName = parts[0].trim();
+      toInsert.push({ 
+        name: channelName, 
+        url: parts[1].trim(), 
+        logo: generateLogoUrl(channelName), 
+        category: finalCat, 
+        status: "pending", 
+        // Sumamos milisegundos de forma inversa para preservar el orden en el que se escribieron
+        createdAt: new Date(baseTime + index) 
+      });
+    }
+  });
+
+  if (toInsert.length > 0) await collection.insertMany(toInsert);
+  res.redirect(`/admin?key=${API_KEY}`);
+});
+
 app.post("/update", async (req, res) => {
   if (req.query.key !== API_KEY) return res.status(401).send("No autorizado");
   const { id, url, name } = req.body;
@@ -226,7 +264,12 @@ app.get("/admin", async (req, res) => {
         
         <div style="margin-bottom: 15px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
           <button class="btn-danger-all" style="margin-bottom:0;" onclick="borrarMasivo('${catName === 'Pantalla Principal' ? 'main' : catName === 'Todas las Señales' ? 'all' : catName === 'Librería Principal' ? 'lib_p' : 'lib_e'}')">🗑 Limpiar Sección</button>
-          <button class="nav-btn" style="background: var(--primary);" onclick="insertarPrimero('${catName}')">➕ INSERTAR AL INICIO (#1)</button>
+          
+          ${esLibreria ? `
+            <button class="nav-btn" style="background: var(--warn); color: #000;" onclick="document.getElementById('bulk-top-${sanitizedCat}').style.display = document.getElementById('bulk-top-${sanitizedCat}').style.display === 'none' ? 'block' : 'none'">⚡ Carga Masiva al Inicio (#1)</button>
+          ` : `
+            <button class="nav-btn" style="background: var(--primary);" onclick="insertarPrimero('${catName}')">➕ INSERTAR AL INICIO (#1)</button>
+          `}
           
           ${esLibreria ? `
             <div style="display: inline-flex; gap: 5px; background: #222; padding: 5px; border-radius: 8px; border: 1px solid #444;">
@@ -237,6 +280,17 @@ app.get("/admin", async (req, res) => {
             <button class="btn-danger-all" style="margin-bottom:0; display: none;" id="btn-eliminar-caidos-${sanitizedCat}" onclick="eliminarCanalesCaidos('${catName}')">🗑 Eliminar Canales Offline</button>
           ` : ''}
         </div>
+
+        ${esLibreria ? `
+          <div class="bulk-section" id="bulk-top-${sanitizedCat}" style="display:none; border-left: 4px solid var(--warn);">
+            <h4 style="color: var(--warn);">⚡ Carga Masiva al INICIO (${catName})</h4>
+            <form method="POST" action="/addBulkTop?key=${API_KEY}">
+              <textarea name="list" rows="3" placeholder="Nombre Canal, URL&#10;Nombre Canal 2, URL 2"></textarea>
+              <input type="hidden" name="category" value="${catName}">
+              <button class="nav-btn" style="background:var(--warn); color:#000; margin-top:10px;">Insertar Primero en ${catName}</button>
+            </form>
+          </div>
+        ` : ''}
 
         <table id="tabla-${sanitizedCat}">
             ${filtered.map(s => `

@@ -30,7 +30,6 @@ async function conectarDB() {
   } catch (e) { console.error("❌ Error MongoDB:", e); }
 }
 
-// --- LÓGICA DE AUTO-REEMPLAZO (JERARQUÍA DE BACKUP) ---
 // --- LÓGICA DE AUTO-REEMPLAZO OPTIMIZADA Y RÁPIDA ---
 let checking = false;
 
@@ -99,10 +98,10 @@ async function checkStreams() {
   checking = false;
 }
 
-// Al final de tu index.js, cambiamos el intervalo de 15 segundos (15000) a 2 minutos (120000)
+// Al iniciar el servidor conectamos la BD y dejamos el intervalo en un tiempo prudente para estabilidad total
 (async () => { 
   await conectarDB(); 
-  setInterval(checkStreams, 20000); // <-- Cambiado a 2 minutos para estabilidad total
+  setInterval(checkStreams, 40000); // Revisa en segundo plano de manera fluida
 })();
 
 // --- ENDPOINTS PARA LA APP ANDROID (VINCULACIÓN) ---
@@ -140,6 +139,7 @@ app.post("/insertFirst", async (req, res) => {
     const firstStream = await collection.find({ category }).sort({ createdAt: 1 }).limit(1).toArray();
     let newTime = firstStream.length > 0 ? new Date(new Date(firstStream[0].createdAt).getTime() - 1000) : new Date();
     await collection.insertOne({ name, url, logo: generateLogoUrl(name), category, status: "pending", createdAt: newTime });
+    checkStreams(); // Despierta el checker
     res.json({ ok: true });
 });
 
@@ -152,6 +152,7 @@ app.post("/insertAt", async (req, res) => {
   const timeA = new Date(targetStream.createdAt).getTime();
   let newTimeValue = nextStream.length > 0 ? timeA + (new Date(nextStream[0].createdAt).getTime() - timeA) / 2 : timeA + 1000;
   await collection.insertOne({ name, url, logo: generateLogoUrl(name), category: targetStream.category, status: "pending", createdAt: new Date(newTimeValue) });
+  checkStreams(); // Despierta el checker
   res.json({ ok: true });
 });
 
@@ -178,6 +179,7 @@ app.post("/addBulk", async (req, res) => {
     }
   });
   if (toInsert.length > 0) await collection.insertMany(toInsert);
+  checkStreams(); // Despierta el checker
   res.redirect(`/admin?key=${API_KEY}`);
 });
 
@@ -190,10 +192,7 @@ app.post("/addBulkTop", async (req, res) => {
   if (upperCat.includes("LIBRERIA PRINCIPAL") || upperCat.includes("LIBRERÍA PRINCIPAL")) finalCat = "Librería Principal";
   else if (upperCat.includes("LIBRERIA EMERGENCIA") || upperCat.includes("LIBRERÍA DE EMERGENCIA")) finalCat = "Librería de Emergencia";
 
-  // Buscamos el primer canal actual de esta sección para obtener su fecha de creación
   const firstStream = await collection.find({ category: finalCat }).sort({ createdAt: 1 }).limit(1).toArray();
-  
-  // Establecemos el tiempo base restando un margen para que queden arriba del todo
   let baseTime = firstStream.length > 0 ? new Date(firstStream[0].createdAt).getTime() - (1000 * 60) : Date.now();
 
   const lines = list.split("\n");
@@ -209,23 +208,69 @@ app.post("/addBulkTop", async (req, res) => {
         logo: generateLogoUrl(channelName), 
         category: finalCat, 
         status: "pending", 
-        // Sumamos milisegundos de forma inversa para preservar el orden en el que se escribieron
         createdAt: new Date(baseTime + index) 
       });
     }
   });
 
   if (toInsert.length > 0) await collection.insertMany(toInsert);
+  checkStreams(); // Despierta el checker
   res.redirect(`/admin?key=${API_KEY}`);
 });
 
+// --- RUTA UPDATE OPTIMIZADA CON SISTEMA DE SEGURIDAD ROLLBACK ---
 app.post("/update", async (req, res) => {
   if (req.query.key !== API_KEY) return res.status(401).send("No autorizado");
   const { id, url, name } = req.body;
-  const updateData = { url, status: "pending" };
-  if (name) { updateData.name = name; updateData.logo = generateLogoUrl(name); }
-  await collection.updateOne({ _id: new ObjectId(id) }, { $set: updateData });
-  res.json({ ok: true });
+  
+  try {
+    const streamActual = await collection.findOne({ _id: new ObjectId(id) });
+    if (!streamActual) return res.status(404).json({ error: "Canal no encontrado" });
+
+    // No aplicar validación estricta si el canal pertenece a una librería de respaldo
+    const esLibreria = streamActual.category === "Librería Principal" || streamActual.category === "Librería de Emergencia";
+    const urlNueva = url.trim();
+
+    if (!esLibreria && urlNueva !== streamActual.url) {
+      let nuevaUrlFunciona = false;
+      
+      // Realizamos un test veloz en caliente antes de guardar en base de datos
+      try {
+        await axios.head(urlNueva, { timeout: 1500, headers: { "User-Agent": "Mozilla/5.0" }, validateStatus: (s) => s < 400 });
+        nuevaUrlFunciona = true;
+      } catch {
+        try {
+          await axios.get(urlNueva, { timeout: 2000, headers: { "User-Agent": "Mozilla/5.0" }, validateStatus: (s) => s === 200 || s === 206 });
+          nuevaUrlFunciona = true;
+        } catch {
+          nuevaUrlFunciona = false;
+        }
+      }
+
+      // REGLA DE PROTECCIÓN: Si tu enlace manual está roto, rechazamos el cambio para no romper la app
+      if (!nuevaUrlFunciona) {
+        console.log(`⚠️ Enlace roto detectado para: ${name || streamActual.name}. Rollback automático activado.`);
+        return res.json({ ok: false, error: "El nuevo enlace ingresado se encuentra OFFLINE. Conservando enlace funcional anterior." });
+      }
+    }
+
+    // Si pasó la prueba o es una librería, procedemos con el guardado normal
+    const updateData = { url: urlNueva, status: "online" }; // Se guarda directo en verde
+    if (name) { 
+      updateData.name = name.trim(); 
+      updateData.logo = generateLogoUrl(name); 
+    }
+    
+    await collection.updateOne({ _id: new ObjectId(id) }, { $set: updateData });
+    
+    // Ejecutamos el checker rápido para asentar todos los estados de las librerías
+    checkStreams();
+    res.json({ ok: true });
+    
+  } catch (err) {
+    console.error("Error en update:", err);
+    res.status(500).json({ ok: false, error: "Error interno" });
+  }
 });
 
 app.post("/deleteStream", async (req, res) => {
@@ -238,14 +283,10 @@ app.post("/deleteOfflineStreams", async (req, res) => {
   if (req.query.key !== API_KEY) return res.status(401).send("No autorizado");
   const { category } = req.body;
   if (!category) return res.status(400).send("Categoría requerida");
-  
   try {
-    // Borra únicamente los que coinciden con la categoría y tienen status offline
     await collection.deleteMany({ category: category, status: "offline" });
     res.json({ ok: true });
-  } catch (e) {
-    res.status(500).json({ ok: false, error: e.message });
-  }
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
 app.post("/deleteAll", async (req, res) => {
@@ -271,10 +312,8 @@ app.get("/admin", async (req, res) => {
 
     const renderTable = (catName) => {
         const filtered = streams.filter(s => s.category === catName);
-        
-        // Validamos si es una de las librerías para habilitar los controles especiales
         const esLibreria = catName === "Librería Principal" || catName === "Librería de Emergencia";
-        const sanitizedCat = catName.replace(/\s+/g, '-'); // Para crear clases CSS válidas
+        const sanitizedCat = catName.replace(/\s+/g, '-');
 
         return `
         <div class="bulk-section">
@@ -355,7 +394,6 @@ app.get("/admin", async (req, res) => {
         .btn-toggle { background: #444; border: 1px solid #666; color: white; padding: 10px 20px; border-radius: 8px; cursor: pointer; font-weight: bold; }
         .btn-toggle.active { background: var(--success); }
         .btn-add-here { width: 100%; background: rgba(255,255,255,0.05); border: 1px dashed #444; color: var(--warn); font-size: 14px; padding: 5px; cursor: pointer; margin: 5px 0; }
-        
       </style>
     </head>
     <body>
@@ -441,8 +479,8 @@ app.get("/admin", async (req, res) => {
                         <td><input class="input-url" id="name-\${s._id}" value="\${s.name}"></td>
                         <td><input class="input-url" id="url-\${s._id}" value="\${s.url}"></td>
                         <td width="100">
-                            <button class="btn-play" onclick="guardar('\${s._id}')">💾</button>
-                            <button class="btn-play" style="background:var(--danger)" onclick="eliminar('\${s._id}')">❌</button>
+                            <button class="nav-btn" style="background:var(--success); padding: 5px 10px;" onclick="guardar('\${s._id}')">💾</button>
+                            <button class="nav-btn" style="background:var(--danger); padding: 5px 10px;" onclick="eliminar('\${s._id}')">❌</button>
                         </td>
                     </tr>\`).join('')}
             </table>\`;
@@ -451,7 +489,18 @@ app.get("/admin", async (req, res) => {
         async function guardar(id) {
           const url = document.getElementById("url-" + id).value;
           const name = document.getElementById("name-" + id).value;
-          await fetch("/update?key=" + API_KEY, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id, url, name }) });
+          
+          const response = await fetch("/update?key=" + API_KEY, { 
+            method: "POST", 
+            headers: { "Content-Type": "application/json" }, 
+            body: JSON.stringify({ id, url, name }) 
+          });
+          
+          const data = await response.json();
+          if (!data.ok) {
+            // Si el backend responde con error de rollback, alertamos al administrador sin recargar
+            alert("❌ " + data.error);
+          }
           location.reload();
         }
 
@@ -498,7 +547,6 @@ app.get("/admin", async (req, res) => {
             }
           });
 
-          // Mostrar el botón de "Eliminar Canales Offline" SOLO si el filtro actual es 'offline'
           const btnEliminarCaidos = document.getElementById('btn-eliminar-caidos-' + sanitizedCat);
           if (btnEliminarCaidos) {
             if (estado === 'offline') {

@@ -112,7 +112,7 @@ async function checkStreams() {
 // Al final de tu index.js, cambiamos el intervalo de 15 segundos (15000) a 2 minutos (120000)
 (async () => { 
   await conectarDB(); 
-  setInterval(checkStreams, 120000); // <-- Cambiado a 2 minutos para estabilidad total
+  setInterval(checkStreams, 30000); // <-- Cambiado a 2 minutos para estabilidad total
 })();
 
 // --- ENDPOINTS PARA LA APP ANDROID (VINCULACIÓN) ---

@@ -456,11 +456,6 @@ app.get("/admin", async (req, res) => {
           document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
           document.getElementById('view-' + view).classList.add('active');
           btn.classList.add('active');
-          
-          // Solo limpia si la función existe y se regresa a la vista principal
-          if (view === 'all' && typeof limpiarBusquedaGlobal === 'function') {
-            limpiarBusquedaGlobal();
-          }
         }
 
         function filterCat(cat, btn) {
@@ -586,75 +581,6 @@ app.get("/admin", async (req, res) => {
           document.getElementById("toggleBtn").classList.add("active");
           document.getElementById("toggleBtn").innerText = "⏸️ Auto-Refresh: ON";
           setTimeout(() => location.reload(), 20000);
-        }
-
-        // ==========================================
-        // FUNCIONES INDEPENDIENTES DE BÚSQUEDA GLOBAL
-        // ==========================================
-        function ejecutarBusquedaGlobal() {
-          const input = document.getElementById("globalSearchInput");
-          if (!input) return;
-          
-          const query = input.value.trim().toLowerCase();
-          const viewSearch = document.getElementById("view-search");
-          const btnClear = document.getElementById("btnClearSearch");
-          const resultsBody = document.getElementById("search-results-body");
-
-          if (query === "") {
-            if (viewSearch) viewSearch.style.display = "none";
-            if (btnClear) btnClear.style.display = "none";
-            return;
-          }
-
-          if (btnClear) btnClear.style.display = "block";
-          if (viewSearch) viewSearch.style.display = "block";
-
-          const filtrados = allStreams.filter(s => {
-            const nameMatch = s.name && s.name.toLowerCase().includes(query);
-            const noEsLib = s.category !== "Librería Principal" && s.category !== "Librería de Emergencia";
-            return nameMatch && noEsLib;
-          });
-
-          if (!resultsBody) return;
-
-          if (filtrados.length === 0) {
-            resultsBody.innerHTML = '<p style="color: #aaa; font-style: italic; padding: 10px;">No se encontraron canales que coincidan.</p>';
-            return;
-          }
-
-          let htmlTabla = '<table>';
-          filtrados.forEach(s => {
-            const iconoStatus = s.status === 'online' ? '🟢' : (s.status === 'offline' ? '🔴' : '⚫');
-            const logoUrl = s.logo || 'https://cdn-icons-png.flaticon.com/512/3172/3172551.png';
-            
-            htmlTabla += '<tr id="row-search-' + s._id + '" class="row-status-' + s.status + '">' +
-              '<td width="30">' + iconoStatus + '</td>' +
-              '<td width="50"><img src="' + logoUrl + '" onerror="this.src=\'https://cdn-icons-png.flaticon.com/512/3172/3172551.png\'" style="width:45px;height:45px;border-radius:8px;object-fit:contain;background:#000;border:1px solid #333;"></td>' +
-              '<td width="180">' +
-                '<input class="input-url" id="name-' + s._id + '" value="' + s.name + '" style="font-weight:bold;"><br/>' +
-                '<span class="cat-badge" style="background: var(--primary); color: #fff;">' + s.category + '</span>' +
-              '</td>' +
-              '<td><input class="input-url" id="url-' + s._id + '" value="' + s.url + '"></td>' +
-              '<td width="100">' +
-                '<button class="btn-play" onclick="guardar(\'' + s._id + '\')">💾</button>' +
-                '<button class="btn-play" style="background:var(--danger)" onclick="eliminar(\'' + s._id + '\')">❌</button>' +
-              '</td>' +
-            '</tr>';
-          });
-          htmlTabla += '</table>';
-          
-          resultsBody.innerHTML = htmlTabla;
-        }
-
-        function limpiarBusquedaGlobal() {
-          const input = document.getElementById("globalSearchInput");
-          if (input) input.value = "";
-          
-          const viewSearch = document.getElementById("view-search");
-          const btnClear = document.getElementById("btnClearSearch");
-          
-          if (viewSearch) viewSearch.style.display = "none";
-          if (btnClear) btnClear.style.display = "none";
         }
       </script>
     </body>

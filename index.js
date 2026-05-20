@@ -451,7 +451,67 @@ app.get("/admin", async (req, res) => {
         const allStreams = ${JSON.stringify(streams)};
         let autoRefresh = localStorage.getItem("iptv_refresh") === "true";
 
+        // 👇 FUNCIÓN DE BÚSQUEDA GLOBAL BLINDADA CONTRA ERRORES DE NODE.JS 👇
+        function ejecutarBusquedaGlobal() {
+          const query = document.getElementById("globalSearchInput").value.trim().toLowerCase();
+          const viewSearch = document.getElementById("view-search");
+          const btnClear = document.getElementById("btnClearSearch");
+          const resultsBody = document.getElementById("search-results-body");
+
+          if (query === "") {
+            viewSearch.style.display = "none";
+            btnClear.style.display = "none";
+            return;
+          }
+
+          btnClear.style.display = "block";
+          viewSearch.style.display = "block";
+
+          // Filtramos excluyendo estrictamente las Librerías
+          const filtrados = allStreams.filter(s => {
+            const nameMatch = s.name && s.name.toLowerCase().includes(query);
+            const noEsLib = s.category !== "Librería Principal" && s.category !== "Librería de Emergencia";
+            return nameMatch && noEsLib;
+          });
+
+          if (filtrados.length === 0) {
+            resultsBody.innerHTML = '<p style="color: #aaa; font-style: italic; padding: 10px;">No se encontraron canales que coincidan.</p>';
+            return;
+          }
+
+          // Construimos la tabla de forma segura sin usar comillas invertidas que confundan al servidor
+          let htmlTabla = '<table>';
+          filtrados.forEach(s => {
+            const iconoStatus = s.status === 'online' ? '🟢' : (s.status === 'offline' ? '🔴' : '⚫');
+            const logoUrl = s.logo || 'https://cdn-icons-png.flaticon.com/512/3172/3172551.png';
+            
+            htmlTabla += '<tr id="row-search-' + s._id + '" class="row-status-' + s.status + '">' +
+              '<td width="30">' + iconoStatus + '</td>' +
+              '<td width="50"><img src="' + logoUrl + '" onerror="this.src=\'https://cdn-icons-png.flaticon.com/512/3172/3172551.png\'" style="width:45px;height:45px;border-radius:8px;object-fit:contain;background:#000;border:1px solid #333;"></td>' +
+              '<td width="180">' +
+                '<input class="input-url" id="name-' + s._id + '" value="' + s.name + '" style="font-weight:bold;"><br/>' +
+                '<span class="cat-badge" style="background: var(--primary); color: #fff;">' + s.category + '</span>' +
+              '</td>' +
+              '<td><input class="input-url" id="url-' + s._id + '" value="' + s.url + '"></td>' +
+              '<td width="100">' +
+                '<button class="btn-play" onclick="guardar(\'' + s._id + '\')">💾</button>' +
+                '<button class="btn-play" style="background:var(--danger)" onclick="eliminar(\'' + s._id + '\')">❌</button>' +
+              '</td>' +
+            '</tr>';
+          });
+          htmlTabla += '</table>';
+          
+          resultsBody.innerHTML = htmlTabla;
+        }
+
+        function limpiarBusquedaGlobal() {
+          document.getElementById("globalSearchInput").value = "";
+          document.getElementById("view-search").style.display = "none";
+          document.getElementById("btnClearSearch").style.display = "none";
+        }
+
         function showView(view, btn) {
+          limpiarBusquedaGlobal(); // Limpia la búsqueda al cambiar de pestaña
           document.querySelectorAll('.view-container').forEach(v => v.classList.remove('active'));
           document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
           document.getElementById('view-' + view).classList.add('active');
@@ -498,7 +558,6 @@ app.get("/admin", async (req, res) => {
           
           const data = await response.json();
           if (!data.ok) {
-            // Si el backend responde con error de rollback, alertamos al administrador sin recargar
             alert("❌ " + data.error);
           }
           location.reload();

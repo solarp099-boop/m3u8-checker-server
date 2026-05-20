@@ -31,12 +31,8 @@ async function conectarDB() {
 }
 
 // --- LÓGICA DE AUTO-REEMPLAZO (JERARQUÍA DE BACKUP) ---
-// --- LÓGICA DE AUTO-REEMPLAZO (JERARQUÍA DE BACKUP OPTIMIZADA) ---
-// --- LÓGICA DE AUTO-REEMPLAZO OPTIMIZADA (SIN SATURACIÓN DE RED) ---
+// --- LÓGICA DE AUTO-REEMPLAZO OPTIMIZADA Y RÁPIDA ---
 let checking = false;
-
-// Función auxiliar para dar un pequeño respiro entre canales (evita bloqueos de IP y falsos rojos)
-const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 async function checkStreams() {
   if (checking || !collection) return;
@@ -44,31 +40,32 @@ async function checkStreams() {
   try {
     const streams = await collection.find().toArray();
     
-    // 1. Validamos el estado real en red canal por canal (secuencial con pausa)
-    for (const stream of streams) {
-      let status = "offline";
-      try {
-        // Petición ligera HEAD
-        await axios.head(stream.url, { timeout: 3000, headers: { "User-Agent": "Mozilla/5.0" }, validateStatus: (s) => s < 400 });
-        status = "online";
-      } catch {
+    // Verificación rápida en paralelo controlado (bloques de 5 en 5 para que no colapse Render)
+    const chunkSize = 5;
+    for (let i = 0; i < streams.length; i += chunkSize) {
+      const chunk = streams.slice(i, i + chunkSize);
+      await Promise.all(chunk.map(async (stream) => {
+        let status = "offline";
         try {
-          // Petición ligera GET alternativa
-          await axios.get(stream.url, { timeout: 3500, headers: { "User-Agent": "Mozilla/5.0" }, validateStatus: (s) => s === 200 || s === 206 });
+          // Intentamos HEAD rápido (máximo 1.5 segundos de espera)
+          await axios.head(stream.url, { timeout: 1500, headers: { "User-Agent": "Mozilla/5.0" }, validateStatus: (s) => s < 400 });
           status = "online";
-        } catch { 
-          status = "offline"; 
+        } catch {
+          try {
+            // Si falla HEAD, intentamos un GET rápido de solo cabeceras
+            await axios.get(stream.url, { timeout: 2000, headers: { "User-Agent": "Mozilla/5.0" }, validateStatus: (s) => s === 200 || s === 206 });
+            status = "online";
+          } catch { 
+            status = "offline"; 
+          }
         }
-      }
 
-      // Solo actualizamos la Base de Datos si el estado realmente cambió
-      if (stream.status !== status) {
-        await collection.updateOne({ _id: stream._id }, { $set: { status } });
-        stream.status = status;
-      }
-
-      // Esperamos 150 milisegundos antes de revisar el siguiente canal para no saturar a Render
-      await delay(150);
+        // Solo actualiza la base de datos si el estado cambió de verdad
+        if (stream.status !== status) {
+          await collection.updateOne({ _id: stream._id }, { $set: { status } });
+          stream.status = status;
+        }
+      }));
     }
 
     // Volvemos a traer la lista con los estados reales ya actualizados
@@ -76,29 +73,22 @@ async function checkStreams() {
     const libPrincipal = updatedStreams.filter(s => s.category === "Librería Principal" && s.status === "online");
     const libEmergencia = updatedStreams.filter(s => s.category === "Librería de Emergencia" && s.status === "online");
 
-    // 2. Aplicamos las Reglas de Reemplazo Automático
+    // Aplicamos las Reglas de Reemplazo Automático
     for (const stream of updatedStreams) {
-      // Las librerías no se tocan a sí mismas
       if (stream.category === "Librería Principal" || stream.category === "Librería de Emergencia") continue;
       
-      // REGLA DE ORO: Si el canal está ONLINE (Verde 🟢), respetamos tu cambio manual y no lo tocamos
-      if (stream.status === "online") {
-        continue; 
-      }
+      // REGLA DE ORO: Si está online, se respeta tu cambio manual
+      if (stream.status === "online") continue; 
 
-      // Si el canal está OFFLINE (Rojo 🔴), se activa el reemplazo desde las librerías
+      // Si está offline, se busca auxilio en las librerías
       const escapedName = stream.name.trim().toLowerCase();
       const backupPrincipal = libPrincipal.find(l => l.name.trim().toLowerCase() === escapedName);
       const backupEmergencia = libEmergencia.find(l => l.name.trim().toLowerCase() === escapedName);
       
       let targetUrl = null;
-      if (backupPrincipal) {
-        targetUrl = backupPrincipal.url;
-      } else if (backupEmergencia) {
-        targetUrl = backupEmergencia.url;
-      }
+      if (backupPrincipal) targetUrl = backupPrincipal.url;
+      else if (backupEmergencia) targetUrl = backupEmergencia.url;
 
-      // Si hay un repuesto disponible en las librerías, levantamos la señal
       if (targetUrl && stream.url !== targetUrl) {
         await collection.updateOne({ _id: stream._id }, { $set: { url: targetUrl, status: "online" } });
       }
